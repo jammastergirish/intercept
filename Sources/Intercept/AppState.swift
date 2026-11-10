@@ -66,7 +66,7 @@ final class AppState: ObservableObject {
         if let path = defaults.string(forKey: "folder") {
             folder = URL(fileURLWithPath: path, isDirectory: true)
         } else {
-            folder = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
+            folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Intercept", isDirectory: true)
         }
     }

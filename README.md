@@ -12,7 +12,7 @@ into a single file.
     mirrors another is skipped, because its picture is already in the video.
 
 The microphone and the system sound are mixed into one audio track, so any player
-hears both sides. Recordings go to `~/Movies/Intercept` by default; pick another
+hears both sides. Recordings go to `~/Documents/Intercept` by default; pick another
 folder from the main window.
 
 Menu-bar app with a main window, styled to match One Tap Transcribe.
