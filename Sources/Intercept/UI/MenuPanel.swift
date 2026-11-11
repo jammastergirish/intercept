@@ -29,8 +29,8 @@ struct MenuPanel: View {
             Divider().overlay(Theme.divider)
 
             VStack(spacing: 2) {
-                MenuRow(title: state.isRecording ? "Stop recording" : "Start recording",
-                        systemImage: state.isRecording ? "stop.circle" : "record.circle") {
+                MenuRow(title: state.isActive ? "Stop recording" : "Start recording",
+                        systemImage: state.isActive ? "stop.circle" : "record.circle") {
                     state.toggle()
                 }
                 .disabled(state.isBusy)
@@ -44,7 +44,7 @@ struct MenuPanel: View {
                 MenuRow(title: "Quit Intercept", systemImage: "power") {
                     NSApp.terminate(nil)
                 }
-                .disabled(state.isRecording || state.isBusy)
+                .disabled(state.isActive || state.isBusy)
             }
             .padding(6)
         }
@@ -56,6 +56,7 @@ struct MenuPanel: View {
         switch state.status {
         case .recording: return "\(AppState.clock(state.elapsed)) · \(state.mode.title)"
         case .saving: return "Saving file…"
+        case .paused: return "Paused · resumes when you unlock"
         default: return "Mode: \(state.mode.title)"
         }
     }

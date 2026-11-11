@@ -58,6 +58,13 @@ temporary file into `<name> (recovered).mp4` (or `.m4a`) and says so in the
 window. It ignores temporary files written to in the last minute, in case another
 copy of the app is still recording them.
 
+**Display sleep and locking.** A locked screen with the display still on keeps
+recording (the video shows the lock screen). When the display goes to sleep,
+macOS stops all capture, sound included. Intercept then saves the recording so
+far, shows **Paused**, and starts a new file by itself as soon as the display
+wakes and the screen is unlocked. If you stop sharing from macOS's own
+screen-recording menu, Intercept stays stopped.
+
 With **All** displays, each display gets its own capture stream. A 30 fps timer
 pastes the newest frame from each one onto a single canvas, capped at 7680×4320
 so the hardware encoder can handle it.
@@ -70,4 +77,6 @@ open -n /Applications/Intercept.app --args --selftest screen 5 /tmp/test.mp4
 cat /tmp/test.mp4.txt
 # finish leftover temporary capture files in a folder
 /Applications/Intercept.app/Contents/MacOS/Intercept --recover ~/Documents/Intercept
+# drive the real app: start, wait N seconds, stop, list files
+open -n /Applications/Intercept.app --args --apptest 120 /tmp/apptest
 ```

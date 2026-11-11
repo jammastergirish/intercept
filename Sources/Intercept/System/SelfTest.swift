@@ -9,6 +9,12 @@ enum SelfTest {
     @MainActor
     static func runIfRequested() {
         let args = CommandLine.arguments
+        // `--apptest <seconds> <folder>`: drive the real AppState (start, wait,
+        // stop) into a folder, logging every status change, then quit.
+        if let i = args.firstIndex(of: "--apptest"), args.count > i + 2, let seconds = Double(args[i + 1]) {
+            runAppTest(seconds: seconds, folder: URL(fileURLWithPath: args[i + 2], isDirectory: true))
+            return
+        }
         // `--recover <folder>`: finish leftover capture files in a folder and quit.
         if let i = args.firstIndex(of: "--recover"), args.count > i + 1 {
             let folder = URL(fileURLWithPath: args[i + 1], isDirectory: true)
@@ -78,6 +84,45 @@ enum SelfTest {
                 report("selftest FAILED: \(error.localizedDescription)", out)
             }
             fflush(stdout)
+            exit(0)
+        }
+    }
+
+    @MainActor
+    private static func runAppTest(seconds: Double, folder: URL) {
+        let defaults = UserDefaults.standard
+        let savedFolder = defaults.object(forKey: "folder")
+        let savedMode = defaults.object(forKey: "mode")
+        let state = AppState()
+        state.folder = folder
+        state.mode = .screen
+        let t0 = Date()
+        var log: [String] = []
+        var last = ""
+        func note() {
+            let s = "\(state.status)"
+            if s != last { log.append(String(format: "%6.1f s  %@", Date().timeIntervalSince(t0), s)); last = s }
+        }
+        Task { @MainActor in
+            state.start()
+            while Date().timeIntervalSince(t0) < seconds {
+                note()
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            note()
+            if state.status == .paused { state.toggle() } else { state.stop() }
+            while state.status != .idle, Date().timeIntervalSince(t0) < seconds + 120 {
+                note()
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            note()
+            let files = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
+            log.append("files: \(files)")
+            if let f = savedFolder { defaults.set(f, forKey: "folder") } else { defaults.removeObject(forKey: "folder") }
+            if let m = savedMode { defaults.set(m, forKey: "mode") } else { defaults.removeObject(forKey: "mode") }
+            let text = log.joined(separator: "\n")
+            print(text)
+            try? text.write(to: folder.appendingPathComponent("apptest.txt"), atomically: true, encoding: .utf8)
             exit(0)
         }
     }

@@ -79,7 +79,7 @@ struct HomeView: View {
         .padding(20)
     }
 
-    private var locked: Bool { state.isRecording || state.isBusy }
+    private var locked: Bool { state.isActive || state.isBusy }
 
     // MARK: Displays
 
@@ -108,7 +108,7 @@ struct HomeView: View {
 
     private var recordBanner: some View {
         HStack(spacing: 16) {
-            RecordButton(recording: state.isRecording, busy: state.isBusy) { state.toggle() }
+            RecordButton(recording: state.isActive, busy: state.isBusy) { state.toggle() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
 
             VStack(alignment: .leading, spacing: 4) {
@@ -137,6 +137,7 @@ struct HomeView: View {
         switch state.status {
         case .starting: return "Starting…"
         case .saving: return "Saving file…"
+        case .paused: return "Paused while the display sleeps"
         case .recording:
             return state.mode == .screen ? "Screen, mic and system audio" : "Mic and system audio"
         default:
@@ -248,13 +249,13 @@ struct HomeView: View {
                         .truncationMode(.middle)
                 }
             }
-            .disabled(state.isRecording || state.isBusy)
+            .disabled(locked)
             .help("Choose where recordings are saved")
 
             Button("Show") { state.revealFolder() }
             Spacer()
             Button("Quit") { NSApp.terminate(nil) }
-                .disabled(state.isRecording || state.isBusy)
+                .disabled(locked)
         }
         .buttonStyle(GraphiteButtonStyle())
     }

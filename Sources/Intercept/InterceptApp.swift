@@ -19,7 +19,7 @@ struct InterceptApp: App {
                 .environmentObject(state)
         } label: {
             HStack(spacing: 4) {
-                Image(nsImage: AppArtwork.menuBarIcon(recording: state.isRecording))
+                Image(nsImage: AppArtwork.menuBarIcon(recording: state.isActive))
                 if state.isRecording {
                     Text(AppState.clock(state.elapsed)).monospacedDigit()
                 }

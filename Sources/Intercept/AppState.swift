@@ -1,12 +1,15 @@
 import SwiftUI
 import AppKit
 import AVFoundation
+import ScreenCaptureKit
 
 @MainActor
 final class AppState: ObservableObject {
 
     enum Status: Equatable {
         case idle, starting, recording, saving, failed(String)
+        /// macOS took the display away (it slept). We resume on wake/unlock.
+        case paused
 
         var badge: String {
             switch self {
@@ -15,6 +18,7 @@ final class AppState: ObservableObject {
             case .recording: return "Recording"
             case .saving: return "Saving"
             case .failed: return "Error"
+            case .paused: return "Paused"
             }
         }
     }
@@ -51,6 +55,8 @@ final class AppState: ObservableObject {
     @Published private(set) var screenGranted = Permissions.screenAuthorized()
 
     var isRecording: Bool { status == .recording }
+    /// Recording, or paused and waiting to resume. Stop ends either.
+    var isActive: Bool { status == .recording || status == .paused }
     var isBusy: Bool { status == .starting || status == .saving }
     var allPermissionsGranted: Bool { micGranted && screenGranted }
 
@@ -60,6 +66,8 @@ final class AppState: ObservableObject {
     private var startedAt: Date?
     private var ticker: Timer?
     private var finalURL: URL?
+    private var resumeTimer: Timer?
+    private var wakeObservers: [NSObjectProtocol] = []
 
     init() {
         let defaults = UserDefaults.standard
@@ -75,7 +83,7 @@ final class AppState: ObservableObject {
         // Finish any recording a crash cut off. Skip in developer test runs,
         // which start a second copy of the app alongside a real one.
         let args = CommandLine.arguments
-        if !args.contains("--selftest") && !args.contains("--snapshot") {
+        if !args.contains("--selftest") && !args.contains("--snapshot") && !args.contains("--apptest") {
             Task { await recoverLeftovers() }
             // A second pass catches files that were too fresh to touch at launch.
             Task {
@@ -143,12 +151,15 @@ final class AppState: ObservableObject {
     func toggle() {
         switch status {
         case .recording: stop()
+        case .paused: cancelResume(); status = .idle
         case .idle, .failed: start()
         default: break
         }
     }
 
-    func start() {
+    func start() { start(resuming: false) }
+
+    private func start(resuming: Bool) {
         refreshPermissions()
         guard allPermissionsGranted else {
             if !micGranted { grantMicrophone() }
@@ -169,8 +180,14 @@ final class AppState: ObservableObject {
         let raw = folder.appendingPathComponent(".\(name).capture.mov")
 
         let session = CaptureSession(mode: mode, displays: displayChoice, rawURL: raw)
-        session.onUnexpectedStop = { [weak self] _ in
-            Task { @MainActor in self?.stop() }
+        session.onUnexpectedStop = { [weak self] error in
+            // If you pressed Stop in macOS's own screen-recording menu, stay
+            // stopped. Anything else (display slept, screen locked with the
+            // display off) means: save what we have and resume when it's back.
+            let ns = error as NSError?
+            let userStopped = ns?.domain == SCStreamErrorDomain
+                && ns?.code == SCStreamError.Code.userStopped.rawValue
+            Task { @MainActor in self?.stop(thenResume: !userStopped) }
         }
         self.session = session
         self.finalURL = final
@@ -186,12 +203,15 @@ final class AppState: ObservableObject {
             } catch {
                 self.session = nil
                 try? FileManager.default.removeItem(at: raw)
-                status = .failed(error.localizedDescription)
+                // While resuming, the display may simply not be back yet.
+                status = resuming ? .paused : .failed(error.localizedDescription)
             }
         }
     }
 
-    func stop() {
+    func stop() { stop(thenResume: false) }
+
+    private func stop(thenResume: Bool) {
         guard status == .recording, let session, let finalURL else { return }
         status = .saving
         stopTicker()
@@ -216,7 +236,52 @@ final class AppState: ObservableObject {
             } catch {
                 status = .failed(error.localizedDescription)
             }
+            if thenResume { beginWaitingToResume() }
         }
+    }
+
+    // MARK: Resume after the display sleeps
+
+    private func beginWaitingToResume() {
+        status = .paused
+        // Try again whenever the display wakes or the screen unlocks, and
+        // every few seconds as a fallback.
+        if wakeObservers.isEmpty {
+            let retry: (Notification) -> Void = { [weak self] _ in
+                Task { @MainActor in self?.attemptResume() }
+            }
+            wakeObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main, using: retry))
+            wakeObservers.append(DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main, using: retry))
+        }
+        resumeTimer?.invalidate()
+        resumeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.attemptResume() }
+        }
+    }
+
+    private func attemptResume() {
+        guard status == .paused else { return }
+        // Capture fails while the screen is locked, so don't even try then.
+        if let d = CGSessionCopyCurrentDictionary() as? [String: Any],
+           (d["CGSSessionScreenIsLocked"] as? Int ?? 0) == 1 { return }
+        start(resuming: true)
+        // `start` sets .recording on success or falls back to .paused.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if status == .recording { cancelResume() }
+        }
+    }
+
+    private func cancelResume() {
+        resumeTimer?.invalidate()
+        resumeTimer = nil
+        for o in wakeObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(o)
+            DistributedNotificationCenter.default().removeObserver(o)
+        }
+        wakeObservers = []
     }
 
     private func finish(url: URL, mode: RecordingMode, duration: TimeInterval) {
