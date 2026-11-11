@@ -50,6 +50,8 @@ enum SelfTest {
             let session = CaptureSession(mode: mode, displays: kind.hasPrefix("screenall") ? .all : .main, rawURL: raw)
             session.includeMirrors = kind == "screenall-mirrors"
             session.duplicateMainForTest = kind == "screenall-double"
+            var stopError = "none"
+            session.onUnexpectedStop = { err in stopError = err?.localizedDescription ?? "nil" }
             do {
                 try await session.start()
                 var peakIn: Float = 0, peakOut: Float = 0
@@ -66,6 +68,7 @@ enum SelfTest {
                 let asset = AVURLAsset(url: out)
                 let dur = try await asset.load(.duration).seconds
                 var lines = ["selftest OK: \(out.path)", String(format: "duration %.2f s, peak in %.3f, peak out %.3f, displays %d, video %.0fx%.0f", dur, peakIn, peakOut, session.displayCount, session.videoSize.width, session.videoSize.height)]
+                lines.append("unexpected stop: \(stopError)")
                 for t in try await asset.load(.tracks) {
                     let size = try await t.load(.naturalSize)
                     lines.append("track \(t.mediaType.rawValue) \(Int(size.width))x\(Int(size.height))")
