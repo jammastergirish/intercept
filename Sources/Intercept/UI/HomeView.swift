@@ -55,6 +55,10 @@ struct HomeView: View {
                 notice(message)
             }
 
+            if let note = state.recoveryNote {
+                notice(note) { state.recoveryNote = nil }
+            }
+
             if !state.allPermissionsGranted {
                 permissionsCard
             }
@@ -257,13 +261,22 @@ struct HomeView: View {
 
     // MARK: Helpers
 
-    private func notice(_ message: String) -> some View {
+    private func notice(_ message: String, dismiss: (() -> Void)? = nil) -> some View {
         HStack(alignment: .top, spacing: 7) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 11)).foregroundStyle(Theme.emberText)
             Text(message)
                 .font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let dismiss {
+                Spacer(minLength: 4)
+                Button(action: dismiss) {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss")
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)

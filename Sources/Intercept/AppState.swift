@@ -45,6 +45,8 @@ final class AppState: ObservableObject {
     @Published private(set) var inLevel: Float = 0     // microphone
     @Published private(set) var outLevel: Float = 0    // sound the Mac plays
     @Published private(set) var lastRecording: Recording?
+    /// Message about recordings finished after a crash, shown until dismissed.
+    @Published var recoveryNote: String?
     @Published private(set) var micGranted = Permissions.microphoneAuthorized()
     @Published private(set) var screenGranted = Permissions.screenAuthorized()
 
@@ -69,6 +71,42 @@ final class AppState: ObservableObject {
             folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Intercept", isDirectory: true)
         }
+
+        // Finish any recording a crash cut off. Skip in developer test runs,
+        // which start a second copy of the app alongside a real one.
+        let args = CommandLine.arguments
+        if !args.contains("--selftest") && !args.contains("--snapshot") {
+            Task { await recoverLeftovers() }
+            // A second pass catches files that were too fresh to touch at launch.
+            Task {
+                try? await Task.sleep(nanoseconds: 75_000_000_000)
+                await recoverLeftovers()
+            }
+        }
+    }
+
+    // MARK: Crash recovery
+
+    func recoverLeftovers() async {
+        guard !isRecording, !isBusy, !Recovery.leftovers(in: folder).isEmpty else { return }
+        let result = await Recovery.run(in: folder)
+        let all = result.recovered + result.failed
+        guard !all.isEmpty else { return }
+        if let newest = all.last {
+            let asset = AVURLAsset(url: newest)
+            let duration = (try? await asset.load(.duration).seconds) ?? 0
+            let bytes = (try? newest.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }.map(Int64.init) ?? 0
+            let hasVideo = !((try? await asset.loadTracks(withMediaType: .video)) ?? []).isEmpty
+            lastRecording = Recording(url: newest, mode: hasVideo ? .screen : .audio,
+                                      finishedAt: Date(), duration: duration, bytes: bytes)
+        }
+        let n = all.count
+        var note = "Intercept closed unexpectedly during \(n == 1 ? "a recording" : "\(n) recordings"). "
+        note += "Saved everything up to the last 10 seconds as “(recovered)”."
+        if !result.failed.isEmpty {
+            note += " \(result.failed.count) couldn't be mixed and was kept as a .mov with separate mic and system tracks."
+        }
+        recoveryNote = note
     }
 
     // MARK: Permissions

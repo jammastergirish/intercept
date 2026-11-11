@@ -173,6 +173,10 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         // Writer for the temporary multi-track file.
         try? FileManager.default.removeItem(at: rawURL)
         let writer = try AVAssetWriter(outputURL: rawURL, fileType: .mov)
+        // Crash safety: save a small table of contents every 10 s, so if the
+        // app dies the file still plays up to the last 10-second mark.
+        // `Recovery` turns such leftovers into normal recordings at next launch.
+        writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
 
         if mode == .screen {
             let w = Int(videoSize.width), h = Int(videoSize.height)

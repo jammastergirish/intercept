@@ -51,6 +51,13 @@ lossless audio tracks. When you stop, it copies the video into the final file
 without re-encoding and mixes the two audio tracks into one AAC track. If the
 mixing step fails, Intercept keeps the un-mixed `.mov` so nothing is lost.
 
+**Crash safety.** The temporary file is written in 10-second fragments, so if
+the app crashes, is force-quit or the Mac loses power, everything up to the last
+10-second mark still plays. Next time Intercept opens, it finishes any leftover
+temporary file into `<name> (recovered).mp4` (or `.m4a`) and says so in the
+window. It ignores temporary files written to in the last minute, in case another
+copy of the app is still recording them.
+
 With **All** displays, each display gets its own capture stream. A 30 fps timer
 pastes the newest frame from each one onto a single canvas, capped at 7680×4320
 so the hardware encoder can handle it.
@@ -61,4 +68,6 @@ so the hardware encoder can handle it.
 # kinds: audio | screen | screenall | screenall-double (main display twice, tests compositing)
 open -n /Applications/Intercept.app --args --selftest screen 5 /tmp/test.mp4
 cat /tmp/test.mp4.txt
+# finish leftover temporary capture files in a folder
+/Applications/Intercept.app/Contents/MacOS/Intercept --recover ~/Documents/Intercept
 ```

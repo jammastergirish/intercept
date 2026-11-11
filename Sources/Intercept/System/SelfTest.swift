@@ -9,6 +9,18 @@ enum SelfTest {
     @MainActor
     static func runIfRequested() {
         let args = CommandLine.arguments
+        // `--recover <folder>`: finish leftover capture files in a folder and quit.
+        if let i = args.firstIndex(of: "--recover"), args.count > i + 1 {
+            let folder = URL(fileURLWithPath: args[i + 1], isDirectory: true)
+            Task {
+                let r = await Recovery.run(in: folder)
+                let text = "recovered: \(r.recovered.map(\.lastPathComponent))\nfailed: \(r.failed.map(\.lastPathComponent))"
+                print(text)
+                try? text.write(to: folder.appendingPathComponent("recover.txt"), atomically: true, encoding: .utf8)
+                exit(0)
+            }
+            return
+        }
         // `--snapshot <png>`: render the main window's view to an image and quit.
         if let i = args.firstIndex(of: "--snapshot"), args.count > i + 1 {
             for appearance in ["light", "dark"] {
