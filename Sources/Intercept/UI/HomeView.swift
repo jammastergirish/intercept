@@ -13,6 +13,7 @@ struct HomeView: View {
             content
         }
         .frame(width: 420)
+        .fixedSize(horizontal: false, vertical: true)   // window hugs its content
         .background(Theme.windowBG)
         .onAppear { state.refreshPermissions(); state.refreshDisplays(); state.refreshRecordings() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in

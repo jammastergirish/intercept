@@ -43,14 +43,15 @@ struct RecordingsTable: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Color.clear.frame(width: 16)
+            Color.clear.frame(width: 16, height: 1)
             column("Recorded", alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
             column("Length", alignment: .trailing).frame(width: 64, alignment: .trailing)
             column("Size", alignment: .trailing).frame(width: 58, alignment: .trailing)
-            Color.clear.frame(width: 44)
+            Color.clear.frame(width: 44, height: 1)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func column(_ title: String, alignment: Alignment) -> some View {
