@@ -5,13 +5,22 @@ import CoreMedia
 import CoreImage
 
 enum RecordingMode: String, CaseIterable, Identifiable {
-    case audio
-    case screen
+    case screenOnly        // the screen, no sound
+    case audio             // mic + system sound
+    case screen            // the screen plus mic + system sound ("screen" kept for saved settings)
 
     var id: String { rawValue }
-    var title: String { self == .audio ? "Audio" : "Screen + Audio" }
-    var fileExtension: String { self == .audio ? "m4a" : "mp4" }
-    var fileType: AVFileType { self == .audio ? .m4a : .mp4 }
+    var title: String {
+        switch self {
+        case .screenOnly: return "Screen"
+        case .audio: return "Audio"
+        case .screen: return "Screen + Audio"
+        }
+    }
+    var hasVideo: Bool { self != .audio }
+    var hasAudio: Bool { self != .screenOnly }
+    var fileExtension: String { hasVideo ? "mp4" : "m4a" }
+    var fileType: AVFileType { hasVideo ? .mp4 : .m4a }
 }
 
 /// Which displays a screen recording covers.
@@ -124,7 +133,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
         // Pick the displays to record.
         var targets = [mainDisplay]
-        if mode == .screen && displayChoice == .all {
+        if mode.hasVideo && displayChoice == .all {
             let others = content.displays.filter { d in
                 d.displayID != mainDisplay.displayID &&
                 (includeMirrors || CGDisplayMirrorsDisplay(d.displayID) == kCGNullDirectDisplay)
@@ -132,12 +141,12 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             targets += others
             if duplicateMainForTest { targets.append(mainDisplay) }
         }
-        compositing = mode == .screen && targets.count > 1
-        displayCount = mode == .screen ? targets.count : 0
+        compositing = mode.hasVideo && targets.count > 1
+        displayCount = mode.hasVideo ? targets.count : 0
 
         // Work out the video size and, when compositing, where each display goes.
         var streamSizes: [Int: (Int, Int)] = [:]
-        if mode == .screen {
+        if mode.hasVideo {
             if compositing {
                 var bounds = targets.map { CGDisplayBounds($0.displayID) }
                 if duplicateMainForTest, let first = bounds.first {
@@ -178,7 +187,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         // `Recovery` turns such leftovers into normal recordings at next launch.
         writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
 
-        if mode == .screen {
+        if mode.hasVideo {
             let w = Int(videoSize.width), h = Int(videoSize.height)
             let bitrate = max(8_000_000, w * h * 4)   // ~4 bits/pixel/s, generous for text
             let settings: [String: Any] = [
@@ -215,32 +224,35 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             AVLinearPCMIsNonInterleaved: false,
             AVLinearPCMIsBigEndianKey: false,
         ]
-        let si = AVAssetWriterInput(mediaType: .audio, outputSettings: pcm)
-        si.expectsMediaDataInRealTime = true
-        writer.add(si)
-        systemInput = si
+        if mode.hasAudio {
+            let si = AVAssetWriterInput(mediaType: .audio, outputSettings: pcm)
+            si.expectsMediaDataInRealTime = true
+            writer.add(si)
+            systemInput = si
 
-        let mi = AVAssetWriterInput(mediaType: .audio, outputSettings: pcm)
-        mi.expectsMediaDataInRealTime = true
-        writer.add(mi)
-        micInput = mi
+            let mi = AVAssetWriterInput(mediaType: .audio, outputSettings: pcm)
+            mi.expectsMediaDataInRealTime = true
+            writer.add(mi)
+            micInput = mi
+        }
 
         guard writer.startWriting() else {
             throw CaptureError.writerFailed(writer.error?.localizedDescription ?? "unknown error")
         }
         self.writer = writer
 
-        // One stream per display. Only the first (main display) carries audio.
+        // One stream per display. Only the first (main display) carries audio,
+        // and only in modes that record sound.
         for (i, display) in targets.enumerated() {
             let config = SCStreamConfiguration()
-            if i == 0 {
+            if i == 0 && mode.hasAudio {
                 config.capturesAudio = true
                 config.captureMicrophone = true
                 config.excludesCurrentProcessAudio = true
                 config.sampleRate = 48_000
                 config.channelCount = 2
             }
-            if mode == .screen, let (w, h) = streamSizes[i] {
+            if mode.hasVideo, let (w, h) = streamSizes[i] {
                 config.width = w
                 config.height = h
                 config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
@@ -259,7 +271,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             let filter = SCContentFilter(display: display, excludingWindows: [])
             let stream = SCStream(filter: filter, configuration: config, delegate: self)
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-            if i == 0 {
+            if i == 0 && mode.hasAudio {
                 try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
                 try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
             }
@@ -325,7 +337,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
         switch type {
         case .screen:
-            guard mode == .screen, let vi = videoInput, Self.isCompleteFrame(sb) else { return }
+            guard mode.hasVideo, let vi = videoInput, Self.isCompleteFrame(sb) else { return }
             if compositing {
                 // Keep the newest frame per display; the timer draws the canvas.
                 if let id = streamIndex[ObjectIdentifier(stream)], let pb = sb.imageBuffer {

@@ -64,6 +64,8 @@ final class AppState: ObservableObject {
     var isActive: Bool { status == .recording || status == .paused }
     var isBusy: Bool { status == .starting || status == .saving }
     var allPermissionsGranted: Bool { micGranted && screenGranted }
+    /// Screen-only recording doesn't use the microphone.
+    private var neededPermissionsGranted: Bool { screenGranted && (micGranted || !mode.hasAudio) }
 
     // MARK: Private
 
@@ -167,8 +169,8 @@ final class AppState: ObservableObject {
 
     private func start(resuming: Bool) {
         refreshPermissions()
-        guard allPermissionsGranted else {
-            if !micGranted { grantMicrophone() }
+        guard neededPermissionsGranted else {
+            if !micGranted && mode.hasAudio { grantMicrophone() }
             if !screenGranted { grantScreen() }
             status = .failed("Grant both permissions first.")
             return

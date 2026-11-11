@@ -70,7 +70,8 @@ enum SelfTest {
         }
 
         guard let i = args.firstIndex(of: "--selftest"), args.count > i + 3,
-              let mode = RecordingMode(rawValue: args[i + 1].hasPrefix("screen") ? "screen" : args[i + 1]),
+              let mode: RecordingMode = args[i + 1] == "screenonly" ? .screenOnly
+                    : RecordingMode(rawValue: args[i + 1].hasPrefix("screen") ? "screen" : args[i + 1]),
               let seconds = Double(args[i + 2]) else { return }
         let out = URL(fileURLWithPath: args[i + 3])
 

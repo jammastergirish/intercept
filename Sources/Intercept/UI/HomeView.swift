@@ -43,11 +43,13 @@ struct HomeView: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 16) {
             SegmentPicker(segments: [
+                Segment(value: RecordingMode.screenOnly, title: RecordingMode.screenOnly.title, systemImage: "display"),
                 Segment(value: RecordingMode.audio, title: RecordingMode.audio.title, systemImage: "waveform"),
-                Segment(value: RecordingMode.screen, title: RecordingMode.screen.title, systemImage: "display"),
+                Segment(value: RecordingMode.screen, title: RecordingMode.screen.title, systemImage: "film"),
             ], selection: $state.mode, disabled: locked)
 
-            if state.mode == .screen {
+            // Only worth asking when there's more than one display to choose from.
+            if state.mode.hasVideo && state.distinctDisplayCount > 1 {
                 displaysRow
             }
 
@@ -102,9 +104,9 @@ struct HomeView: View {
 
     private var displaysNote: String {
         let n = state.distinctDisplayCount
-        if state.displayChoice == .main { return n > 1 ? "1 of \(n)" : "1 display" }
-        return n == 1 ? "1 (rest mirrored)" : "\(n) side by side"
+        return state.displayChoice == .main ? "1 of \(n)" : "\(n) side by side"
     }
+
 
     // MARK: Record banner
 
@@ -129,6 +131,7 @@ struct HomeView: View {
                 LevelMeter(label: "In", level: state.inLevel)
                 LevelMeter(label: "Out", level: state.outLevel)
             }
+            .opacity(state.mode.hasAudio ? 1 : 0.3)   // no sound recorded in Screen mode
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -141,7 +144,11 @@ struct HomeView: View {
         case .saving: return "Saving file…"
         case .paused: return "Paused while the display sleeps"
         case .recording:
-            return state.mode == .screen ? "Screen, mic and system audio" : "Mic and system audio"
+            switch state.mode {
+            case .screenOnly: return "Screen only, no sound"
+            case .audio: return "Mic and system audio"
+            case .screen: return "Screen, mic and system audio"
+            }
         default:
             return "⇧⌘R to record"
         }
