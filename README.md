@@ -15,7 +15,7 @@ The microphone and the system sound are mixed into one audio track, so any playe
 hears both sides. Recordings go to `~/Documents/Intercept` by default; pick another
 folder from the main window.
 
-Menu-bar app with a main window, styled to match One Tap Transcribe.
+A regular app (Dock and Cmd-Tab) with a menu-bar icon, styled to match One Tap Transcribe.
 **⇧⌘R** starts and stops recording while the window is focused.
 
 ## Requirements
@@ -42,6 +42,16 @@ buttons:
 Signing reuses One Tap Transcribe's local self-signed identity
 (`./setup_signing.sh` in that project) if it exists, so rebuilds keep their
 permissions. Otherwise the script signs ad-hoc.
+
+### Public release (signed + notarized)
+
+```bash
+SIGN_ID="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE="OneTapNotary" ./release.sh
+```
+
+This signs with Developer ID and the Hardened Runtime, builds
+`build/Intercept-<version>.dmg` (plus a version-less `Intercept.dmg`), has Apple
+notarize it, and staples the ticket so it opens without Gatekeeper warnings.
 
 ## How it works
 
