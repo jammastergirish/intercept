@@ -42,13 +42,18 @@ final class AppState: ObservableObject {
     /// Displays showing their own picture (mirrored copies don't count).
     @Published private(set) var distinctDisplayCount = Displays.distinctIDs().count
     @Published var folder: URL {
-        didSet { UserDefaults.standard.set(folder.path, forKey: "folder") }
+        didSet {
+            UserDefaults.standard.set(folder.path, forKey: "folder")
+            refreshRecordings()
+        }
     }
     @Published private(set) var status: Status = .idle
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var inLevel: Float = 0     // microphone
     @Published private(set) var outLevel: Float = 0    // sound the Mac plays
     @Published private(set) var lastRecording: Recording?
+    /// Every recording in the folder, newest first.
+    @Published private(set) var recordings: [RecordingItem] = []
     /// Message about recordings finished after a crash, shown until dismissed.
     @Published var recoveryNote: String?
     @Published private(set) var micGranted = Permissions.microphoneAuthorized()
@@ -115,6 +120,7 @@ final class AppState: ObservableObject {
             note += " \(result.failed.count) couldn't be mixed and was kept as a .mov with separate mic and system tracks."
         }
         recoveryNote = note
+        refreshRecordings()
     }
 
     // MARK: Permissions
@@ -287,7 +293,24 @@ final class AppState: ObservableObject {
     private func finish(url: URL, mode: RecordingMode, duration: TimeInterval) {
         let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }.map(Int64.init) ?? 0
         lastRecording = Recording(url: url, mode: mode, finishedAt: Date(), duration: duration, bytes: bytes)
+        refreshRecordings()
         status = .idle
+    }
+
+    // MARK: Recordings list
+
+    func refreshRecordings() {
+        let folder = self.folder
+        Task {
+            let items = await RecordingLibrary.scan(folder)
+            if folder == self.folder { recordings = items }
+        }
+    }
+
+    func moveToTrash(_ item: RecordingItem) {
+        NSWorkspace.shared.recycle([item.url]) { [weak self] _, _ in
+            Task { @MainActor in self?.refreshRecordings() }
+        }
     }
 
     // MARK: Folder

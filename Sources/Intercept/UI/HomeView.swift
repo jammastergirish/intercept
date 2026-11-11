@@ -14,12 +14,13 @@ struct HomeView: View {
         }
         .frame(width: 420)
         .background(Theme.windowBG)
-        .onAppear { state.refreshPermissions(); state.refreshDisplays() }
+        .onAppear { state.refreshPermissions(); state.refreshDisplays(); state.refreshRecordings() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
             state.refreshDisplays()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             state.refreshPermissions()
+            state.refreshRecordings()
         }
     }
 
@@ -65,13 +66,13 @@ struct HomeView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    MonoLabel(text: "Last recording", size: 11, tracking: 1.0, color: Theme.textSecondary)
+                    MonoLabel(text: "Recordings", size: 11, tracking: 1.0, color: Theme.textSecondary)
                     Spacer()
-                    if let r = state.lastRecording {
-                        Text(meta(r)).font(.mono(11)).foregroundStyle(Theme.monoFaint)
+                    if !state.recordings.isEmpty {
+                        Text("\(state.recordings.count)").font(.mono(11)).foregroundStyle(Theme.monoFaint)
                     }
                 }
-                lastRecordingCard
+                RecordingsTable()
             }
 
             footer
@@ -198,43 +199,6 @@ struct HomeView: View {
         }
     }
 
-    // MARK: Last recording
-
-    private var lastRecordingCard: some View {
-        HStack(spacing: 0) {
-            Rectangle().fill(Theme.ember).frame(width: 3)
-            Group {
-                if let r = state.lastRecording {
-                    HStack(spacing: 10) {
-                        Image(systemName: r.mode == .screen ? "film" : "waveform")
-                            .font(.system(size: 15))
-                            .foregroundStyle(Theme.emberText)
-                        Text(r.url.lastPathComponent)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer(minLength: 6)
-                        Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([r.url]) }
-                            .buttonStyle(EmberLinkButtonStyle())
-                        Button("Open") { NSWorkspace.shared.open(r.url) }
-                            .buttonStyle(EmberLinkButtonStyle())
-                    }
-                } else {
-                    Text("Nothing recorded yet. Press the record button.")
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-        }
-        .background(Theme.cardBG, in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.fieldBorder, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-    }
-
     // MARK: Footer
 
     private var footer: some View {
@@ -282,12 +246,6 @@ struct HomeView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.emberTint, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func meta(_ r: AppState.Recording) -> String {
-        let time = Self.timeFormatter.string(from: r.finishedAt)
-        let size = ByteCountFormatter.string(fromByteCount: r.bytes, countStyle: .file)
-        return "\(time) · \(AppState.clock(r.duration)) · \(size)"
     }
 
     private func abbreviated(_ path: String) -> String {

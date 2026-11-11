@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import AppKit
 import SwiftUI
+import ScreenCaptureKit
 
 /// Developer check: `Intercept.app/Contents/MacOS/Intercept --selftest <audio|screen> <seconds> <out-file>`
 /// records for N seconds with the real pipeline, prints the result's tracks, and quits.
@@ -9,6 +10,25 @@ enum SelfTest {
     @MainActor
     static func runIfRequested() {
         let args = CommandLine.arguments
+        // `--windows <file>`: list the windows ScreenCaptureKit can see, and quit.
+        if let i = args.firstIndex(of: "--windows"), args.count > i + 1 {
+            let out = URL(fileURLWithPath: args[i + 1])
+            Task {
+                var lines: [String] = []
+                do {
+                    let c = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                    for w in c.windows {
+                        let f = w.frame
+                        lines.append(String(format: "%@ | %@ | layer %d | %.0f,%.0f %.0fx%.0f | onscreen %d | active %d | title=%@",
+                            w.owningApplication?.bundleIdentifier ?? "-", w.owningApplication?.applicationName ?? "-",
+                            w.windowLayer, f.minX, f.minY, f.width, f.height, w.isOnScreen ? 1 : 0, w.isActive ? 1 : 0, w.title ?? ""))
+                    }
+                } catch { lines.append("error: \(error.localizedDescription)") }
+                try? lines.joined(separator: "\n").write(to: out, atomically: true, encoding: .utf8)
+                exit(0)
+            }
+            return
+        }
         // `--apptest <seconds> <folder>`: drive the real AppState (start, wait,
         // stop) into a folder, logging every status change, then quit.
         if let i = args.firstIndex(of: "--apptest"), args.count > i + 2, let seconds = Double(args[i + 1]) {
@@ -29,9 +49,13 @@ enum SelfTest {
         }
         // `--snapshot <png>`: render the main window's view to an image and quit.
         if let i = args.firstIndex(of: "--snapshot"), args.count > i + 1 {
+          let state = AppState()
+          state.refreshRecordings()
+          Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)   // let the recordings list load
             for appearance in ["light", "dark"] {
                 NSApp.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
-                let view = HomeView().environmentObject(AppState())
+                let view = HomeView().environmentObject(state)
                     .environment(\.colorScheme, appearance == "light" ? .light : .dark)
                 let renderer = ImageRenderer(content: view)
                 renderer.scale = 2
@@ -41,6 +65,8 @@ enum SelfTest {
                 }
             }
             exit(0)
+          }
+          return
         }
 
         guard let i = args.firstIndex(of: "--selftest"), args.count > i + 3,
