@@ -215,15 +215,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         }
 
         // Lossless PCM for the intermediate audio tracks.
-        let pcm: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 48_000,
-            AVNumberOfChannelsKey: 2,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsNonInterleaved: false,
-            AVLinearPCMIsBigEndianKey: false,
-        ]
+        let pcm = Mixdown.pcmSettings
         if mode.hasAudio {
             let si = AVAssetWriterInput(mediaType: .audio, outputSettings: pcm)
             si.expectsMediaDataInRealTime = true

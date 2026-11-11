@@ -21,7 +21,7 @@ struct InterceptApp: App {
             HStack(spacing: 4) {
                 Image(nsImage: AppArtwork.menuBarIcon(recording: state.isActive))
                 if state.isRecording {
-                    Text(AppState.clock(state.elapsed)).monospacedDigit()
+                    Text(Format.clock(state.elapsed)).monospacedDigit()
                 }
             }
         }

@@ -23,14 +23,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    struct Recording: Equatable {
-        let url: URL
-        let mode: RecordingMode
-        let finishedAt: Date
-        let duration: TimeInterval
-        let bytes: Int64
-    }
-
     // MARK: Published state
 
     @Published var mode: RecordingMode {
@@ -51,7 +43,6 @@ final class AppState: ObservableObject {
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var inLevel: Float = 0     // microphone
     @Published private(set) var outLevel: Float = 0    // sound the Mac plays
-    @Published private(set) var lastRecording: Recording?
     /// Every recording in the folder, newest first.
     @Published private(set) var recordings: [RecordingItem] = []
     /// Message about recordings finished after a crash, shown until dismissed.
@@ -63,6 +54,8 @@ final class AppState: ObservableObject {
     /// Recording, or paused and waiting to resume. Stop ends either.
     var isActive: Bool { status == .recording || status == .paused }
     var isBusy: Bool { status == .starting || status == .saving }
+    /// Settings and Quit are locked while a recording is running, paused or saving.
+    var isLocked: Bool { isActive || isBusy }
     var allPermissionsGranted: Bool { micGranted && screenGranted }
     /// Screen-only recording doesn't use the microphone.
     private var neededPermissionsGranted: Bool { screenGranted && (micGranted || !mode.hasAudio) }
@@ -107,14 +100,6 @@ final class AppState: ObservableObject {
         let result = await Recovery.run(in: folder)
         let all = result.recovered + result.failed
         guard !all.isEmpty else { return }
-        if let newest = all.last {
-            let asset = AVURLAsset(url: newest)
-            let duration = (try? await asset.load(.duration).seconds) ?? 0
-            let bytes = (try? newest.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }.map(Int64.init) ?? 0
-            let hasVideo = !((try? await asset.loadTracks(withMediaType: .video)) ?? []).isEmpty
-            lastRecording = Recording(url: newest, mode: hasVideo ? .screen : .audio,
-                                      finishedAt: Date(), duration: duration, bytes: bytes)
-        }
         let n = all.count
         var note = "Intercept closed unexpectedly during \(n == 1 ? "a recording" : "\(n) recordings"). "
         note += "Saved everything up to the last 10 seconds as “(recovered)”."
@@ -183,8 +168,8 @@ final class AppState: ObservableObject {
             return
         }
 
-        let name = "Intercept \(Self.fileStamp.string(from: Date()))"
-        let final = uniqueURL(folder.appendingPathComponent(name).appendingPathExtension(mode.fileExtension))
+        let name = "Intercept \(Format.fileStamp(Date()))"
+        let final = folder.appendingPathComponent(name).appendingPathExtension(mode.fileExtension).uniqued()
         let raw = folder.appendingPathComponent(".\(name).capture.mov")
 
         let session = CaptureSession(mode: mode, displays: displayChoice, rawURL: raw)
@@ -223,24 +208,15 @@ final class AppState: ObservableObject {
         guard status == .recording, let session, let finalURL else { return }
         status = .saving
         stopTicker()
-        let duration = startedAt.map { Date().timeIntervalSince($0) } ?? elapsed
         let mode = session.mode
         self.session = nil
 
         Task {
             do {
                 let raw = try await session.stop()
-                do {
-                    try await Mixdown.run(raw: raw, to: finalURL, fileType: mode.fileType)
-                    try? FileManager.default.removeItem(at: raw)
-                    finish(url: finalURL, mode: mode, duration: duration)
-                } catch {
-                    // Keep the un-mixed capture rather than lose the recording.
-                    let fallback = finalURL.deletingPathExtension().appendingPathExtension("mov")
-                    try? FileManager.default.moveItem(at: raw, to: fallback)
-                    finish(url: fallback, mode: mode, duration: duration)
-                    status = .failed("Saved unmixed copy (\(error.localizedDescription)).")
-                }
+                let (_, mixError) = await Mixdown.finish(raw: raw, to: finalURL, fileType: mode.fileType)
+                refreshRecordings()
+                status = mixError.map { .failed("Saved an unmixed .mov instead (\($0.localizedDescription)).") } ?? .idle
             } catch {
                 status = .failed(error.localizedDescription)
             }
@@ -290,13 +266,6 @@ final class AppState: ObservableObject {
             DistributedNotificationCenter.default().removeObserver(o)
         }
         wakeObservers = []
-    }
-
-    private func finish(url: URL, mode: RecordingMode, duration: TimeInterval) {
-        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }.map(Int64.init) ?? 0
-        lastRecording = Recording(url: url, mode: mode, finishedAt: Date(), duration: duration, bytes: bytes)
-        refreshRecordings()
-        status = .idle
     }
 
     // MARK: Recordings list
@@ -364,28 +333,4 @@ final class AppState: ObservableObject {
         return max(0, min(1, (db + 50) / 50))
     }
 
-    // MARK: Helpers
-
-    private func uniqueURL(_ url: URL) -> URL {
-        var candidate = url
-        var n = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            let base = url.deletingPathExtension().lastPathComponent
-            candidate = url.deletingLastPathComponent()
-                .appendingPathComponent("\(base) \(n)").appendingPathExtension(url.pathExtension)
-            n += 1
-        }
-        return candidate
-    }
-
-    private static let fileStamp: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        return f
-    }()
-
-    static func clock(_ t: TimeInterval) -> String {
-        let s = Int(t)
-        return String(format: "%02d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
-    }
 }

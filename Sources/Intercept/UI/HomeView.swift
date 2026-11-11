@@ -46,7 +46,7 @@ struct HomeView: View {
                 Segment(value: RecordingMode.screenOnly, title: RecordingMode.screenOnly.title, systemImage: "display"),
                 Segment(value: RecordingMode.audio, title: RecordingMode.audio.title, systemImage: "waveform"),
                 Segment(value: RecordingMode.screen, title: RecordingMode.screen.title, systemImage: "film"),
-            ], selection: $state.mode, disabled: locked)
+            ], selection: $state.mode, disabled: state.isLocked)
 
             // Only worth asking when there's more than one display to choose from.
             if state.mode.hasVideo && state.distinctDisplayCount > 1 {
@@ -83,7 +83,6 @@ struct HomeView: View {
         .padding(20)
     }
 
-    private var locked: Bool { state.isActive || state.isBusy }
 
     // MARK: Displays
 
@@ -97,7 +96,7 @@ struct HomeView: View {
             SegmentPicker(segments: [
                 Segment(value: DisplayChoice.main, title: "Main", systemImage: nil),
                 Segment(value: DisplayChoice.all, title: "All", systemImage: nil),
-            ], selection: $state.displayChoice, disabled: locked, compact: true)
+            ], selection: $state.displayChoice, disabled: state.isLocked, compact: true)
             .frame(width: 130)
         }
     }
@@ -116,7 +115,7 @@ struct HomeView: View {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(AppState.clock(state.elapsed))
+                Text(Format.clock(state.elapsed))
                     .font(.mono(22, weight: .medium))
                     .foregroundStyle(state.isRecording ? .white : Theme.inverseText)
                     .monospacedDigit()
@@ -221,13 +220,13 @@ struct HomeView: View {
                         .truncationMode(.middle)
                 }
             }
-            .disabled(locked)
+            .disabled(state.isLocked)
             .help("Choose where recordings are saved")
 
             Button("Show") { state.revealFolder() }
             Spacer()
             Button("Quit") { NSApp.terminate(nil) }
-                .disabled(locked)
+                .disabled(state.isLocked)
         }
         .buttonStyle(GraphiteButtonStyle())
     }
@@ -260,12 +259,6 @@ struct HomeView: View {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
-
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f
-    }()
 }
 
 /// Big round ember record button. A circle when idle, a rounded square while recording.

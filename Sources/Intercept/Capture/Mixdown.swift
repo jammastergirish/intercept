@@ -6,6 +6,35 @@ import AVFoundation
 /// mixed into one AAC track so every player hears both sides.
 enum Mixdown {
 
+    /// Uncompressed 48 kHz stereo float audio: the capture file's audio
+    /// tracks, and what the mixer outputs before AAC encoding.
+    static let pcmSettings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: 48_000,
+        AVNumberOfChannelsKey: 2,
+        AVLinearPCMBitDepthKey: 32,
+        AVLinearPCMIsFloatKey: true,
+        AVLinearPCMIsNonInterleaved: false,
+        AVLinearPCMIsBigEndianKey: false,
+    ]
+
+    /// Turn a capture file into the final recording at `out` and delete the
+    /// capture. If mixing fails, keep the capture instead, renamed to
+    /// `<out name>.mov` (separate mic and system tracks), so nothing is lost.
+    /// Returns where the recording ended up and the mixing error, if any.
+    static func finish(raw: URL, to out: URL, fileType: AVFileType) async -> (url: URL, error: Error?) {
+        do {
+            try await run(raw: raw, to: out, fileType: fileType)
+            try? FileManager.default.removeItem(at: raw)
+            return (out, nil)
+        } catch {
+            try? FileManager.default.removeItem(at: out)
+            let keep = out.deletingPathExtension().appendingPathExtension("mov").uniqued()
+            try? FileManager.default.moveItem(at: raw, to: keep)
+            return (keep, error)
+        }
+    }
+
     static func run(raw: URL, to out: URL, fileType: AVFileType) async throws {
         let asset = AVURLAsset(url: raw)
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
@@ -29,15 +58,7 @@ enum Mixdown {
         }
 
         if !audioTracks.isEmpty {
-            let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVSampleRateKey: 48_000,
-                AVNumberOfChannelsKey: 2,
-                AVLinearPCMBitDepthKey: 32,
-                AVLinearPCMIsFloatKey: true,
-                AVLinearPCMIsNonInterleaved: false,
-                AVLinearPCMIsBigEndianKey: false,
-            ])
+            let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: pcmSettings)
             reader.add(output)
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,

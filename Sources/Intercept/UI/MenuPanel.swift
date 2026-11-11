@@ -44,7 +44,7 @@ struct MenuPanel: View {
                 MenuRow(title: "Quit Intercept", systemImage: "power") {
                     NSApp.terminate(nil)
                 }
-                .disabled(state.isActive || state.isBusy)
+                .disabled(state.isLocked)
             }
             .padding(6)
         }
@@ -54,7 +54,7 @@ struct MenuPanel: View {
 
     private var subtitle: String {
         switch state.status {
-        case .recording: return "\(AppState.clock(state.elapsed)) · \(state.mode.title)"
+        case .recording: return "\(Format.clock(state.elapsed)) · \(state.mode.title)"
         case .saving: return "Saving file…"
         case .paused: return "Paused · resumes when you unlock"
         default: return "Mode: \(state.mode.title)"

@@ -70,12 +70,12 @@ private struct RecordingRow: View {
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.emberText)
                 .frame(width: 16)
-            Text(Self.when(item.date))
+            Text(Format.when(item.date))
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(item.duration.map(Self.length) ?? "—")
+            Text(item.duration.map(Format.length) ?? "—")
                 .font(.mono(11.5))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 64, alignment: .trailing)
@@ -120,25 +120,4 @@ private struct RecordingRow: View {
         .buttonStyle(.plain)
         .help(help)
     }
-
-    // "Today 19:53", "Yesterday 08:12", "Mon 9 Nov 14:03", "9 Nov 2025 14:03"
-    static func when(_ date: Date) -> String {
-        let cal = Calendar.current
-        let time = timeFmt.string(from: date)
-        if cal.isDateInToday(date) { return "Today \(time)" }
-        if cal.isDateInYesterday(date) { return "Yesterday \(time)" }
-        if cal.isDate(date, equalTo: Date(), toGranularity: .year) { return "\(dayFmt.string(from: date)) \(time)" }
-        return "\(yearFmt.string(from: date)) \(time)"
-    }
-
-    static func length(_ t: TimeInterval) -> String {
-        let s = Int(t.rounded())
-        return s >= 3600
-            ? String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
-            : String(format: "%d:%02d", s / 60, s % 60)
-    }
-
-    private static let timeFmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm"; return f }()
-    private static let dayFmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM"; return f }()
-    private static let yearFmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "d MMM yyyy"; return f }()
 }

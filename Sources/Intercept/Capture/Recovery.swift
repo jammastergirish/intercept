@@ -44,33 +44,11 @@ enum Recovery {
 
             let hasVideo = !((try? await asset.loadTracks(withMediaType: .video)) ?? []).isEmpty
             let mode: RecordingMode = hasVideo ? .screen : .audio
-            let out = unique(folder.appendingPathComponent("\(name) (recovered)")
-                .appendingPathExtension(mode.fileExtension))
-            do {
-                try await Mixdown.run(raw: raw, to: out, fileType: mode.fileType)
-                try? FileManager.default.removeItem(at: raw)
-                result.recovered.append(out)
-            } catch {
-                // Keep the raw capture visible rather than lose it.
-                try? FileManager.default.removeItem(at: out)
-                let keep = unique(folder.appendingPathComponent("\(name) (recovered, unmixed)")
-                    .appendingPathExtension("mov"))
-                try? FileManager.default.moveItem(at: raw, to: keep)
-                result.failed.append(keep)
-            }
+            let out = folder.appendingPathComponent("\(name) (recovered)")
+                .appendingPathExtension(mode.fileExtension).uniqued()
+            let (saved, error) = await Mixdown.finish(raw: raw, to: out, fileType: mode.fileType)
+            if error == nil { result.recovered.append(saved) } else { result.failed.append(saved) }
         }
         return result
-    }
-
-    private static func unique(_ url: URL) -> URL {
-        var candidate = url
-        var n = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            let base = url.deletingPathExtension().lastPathComponent
-            candidate = url.deletingLastPathComponent()
-                .appendingPathComponent("\(base) \(n)").appendingPathExtension(url.pathExtension)
-            n += 1
-        }
-        return candidate
     }
 }
