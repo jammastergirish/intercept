@@ -44,6 +44,10 @@ echo "==> packaging .dmg"
 VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$APP/Contents/Info.plist")
 DMG="$ROOT/build/Intercept-$VERSION.dmg"
 
+echo "==> signing the .dmg"
+codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
+codesign --verify --verbose=2 "$DMG"
+
 echo "==> notarizing (a few minutes)…"
 xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
 
