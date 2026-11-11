@@ -1,0 +1,8 @@
+# Netlify: this repo is a Swift app; the website is just the static one-pager in
+# www/. Set the base directory to www/ so Netlify never sees Package.swift and
+# doesn't try to install Swift or build the app. There is nothing to build, so
+# the publish directory is the base directory itself.
+[build]
+  base = "www"
+  publish = "."
+  command = "echo 'Static site — nothing to build.'"

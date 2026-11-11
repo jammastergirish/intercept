@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Intercept — record everything going in and out of your Mac</title>
+    <meta
+      name="description"
+      content="One button records your microphone, every sound your Mac plays and, if you like, the whole screen, into a single file. Free for macOS."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 56'%3E%3Crect x='3' y='3' width='50' height='50' rx='12' fill='%231F1F1E'/%3E%3Ccircle cx='28' cy='28' r='13.5' fill='none' stroke='%23E8742E' stroke-width='2.75'/%3E%3Ccircle cx='28' cy='28' r='7.5' fill='%23E8742E'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --ember: #e8742e;
+        --ember-text: #c2591f;
+        --ember-tint: rgba(232, 116, 46, 0.13);
+        --bg: #f3f3f2;
+        --card: #ffffff;
+        --border: rgba(0, 0, 0, 0.1);
+        --text: #2c2c2a;
+        --text-2: #55554f;
+        --text-3: #8b8b85;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ember-text: #f08a48;
+          --ember-tint: rgba(232, 116, 46, 0.16);
+          --bg: #1c1c1b;
+          --card: rgba(255, 255, 255, 0.045);
+          --border: rgba(255, 255, 255, 0.1);
+          --text: #e2e2dd;
+          --text-2: #a3a39d;
+          --text-3: #87877f;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+      img {
+        max-width: 100%;
+        display: block;
+      }
+      .wrap {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 0 22px;
+      }
+      .mono {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 11px;
+        color: var(--text-2);
+      }
+      a {
+        color: var(--ember-text);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      kbd {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 0.9em;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 0;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+      }
+      .brand svg {
+        width: 26px;
+        height: 26px;
+      }
+
+      .hero {
+        text-align: center;
+        padding: 40px 0 8px;
+      }
+      .hero h1 {
+        font-size: 42px;
+        margin: 0 0 10px;
+        letter-spacing: -0.5px;
+      }
+      .hero p.tag {
+        font-size: 18px;
+        color: var(--text-2);
+        max-width: 580px;
+        margin: 0 auto 26px;
+      }
+      .cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--ember);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        padding: 11px 22px;
+        border-radius: 9px;
+      }
+      .cta:hover {
+        text-decoration: none;
+        opacity: 0.92;
+      }
+      .meta {
+        margin-top: 14px;
+      }
+      .meta .mono {
+        font-size: 11.5px;
+      }
+      .meta .sub {
+        display: inline-block;
+        margin-top: 9px;
+        font-size: 12px;
+        color: var(--text-3);
+      }
+
+      .shot {
+        margin: 30px auto 0;
+        max-width: 420px;
+      }
+      .shot img {
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        box-shadow: 0 22px 55px rgba(0, 0, 0, 0.28);
+      }
+
+      .modes {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+        margin: 44px 0 10px;
+      }
+      .mode {
+        background: #161615;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 20px;
+        color: #c9c9c6;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+      }
+      .mode h3 {
+        color: #f0f0ec;
+        font-size: 16px;
+        margin: 10px 0 4px;
+      }
+      .mode p {
+        margin: 0;
+        font-size: 13.5px;
+      }
+      .mode .file {
+        display: block;
+        margin-top: 12px;
+        color: #8a8a84;
+      }
+      .mode svg {
+        width: 22px;
+        height: 22px;
+        color: var(--ember);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+        margin: 26px 0;
+      }
+      .feat {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 18px;
+      }
+      .feat h3 {
+        font-size: 15px;
+        margin: 0 0 6px;
+      }
+      .feat p {
+        font-size: 13.5px;
+        color: var(--text-3);
+        margin: 0;
+      }
+
+      .band {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--ember);
+        border-radius: 10px;
+        padding: 20px 22px;
+        margin: 26px 0;
+      }
+      .band h2 {
+        font-size: 18px;
+        margin: 0 0 6px;
+      }
+      .band p {
+        margin: 0;
+        color: var(--text-2);
+        font-size: 14px;
+      }
+
+      section {
+        padding: 14px 0;
+      }
+      section > .mono {
+        display: block;
+        margin-bottom: 14px;
+      }
+      ol.install {
+        padding-left: 20px;
+        color: var(--text-2);
+        font-size: 14px;
+      }
+      ol.install li {
+        margin-bottom: 6px;
+      }
+      ol.install b {
+        color: var(--text);
+      }
+
+      footer {
+        border-top: 1px solid var(--border);
+        margin-top: 34px;
+        padding: 24px 0 44px;
+        text-align: center;
+        color: var(--text-3);
+        font-size: 12.5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <span class="brand">
+          <svg viewBox="0 0 56 56" aria-hidden="true">
+            <rect x="3" y="3" width="50" height="50" rx="12" fill="#1F1F1E" />
+            <circle
+              cx="28"
+              cy="28"
+              r="13.5"
+              fill="none"
+              stroke="#E8742E"
+              stroke-width="2.75"
+            />
+            <circle cx="28" cy="28" r="7.5" fill="#E8742E" />
+          </svg>
+          Intercept
+        </span>
+        <a class="mono" href="https://github.com/jammastergirish/intercept"
+          >GitHub ↗</a
+        >
+      </header>
+
+      <div class="hero">
+        <h1>Record both sides.</h1>
+        <p class="tag">
+          One button records your microphone and every sound your Mac plays —
+          and, if you like, the whole screen — into a single file you can open
+          anywhere.
+        </p>
+        <a
+          class="cta"
+          href="https://github.com/jammastergirish/intercept/releases/latest/download/Intercept.dmg"
+          >Download for macOS</a
+        >
+        <div class="meta">
+          <span class="mono">Free · macOS 26+ · Apple Silicon</span><br />
+          <a
+            class="sub"
+            href="https://github.com/jammastergirish/intercept/releases"
+            >Release notes &amp; source on GitHub ↗</a
+          >
+        </div>
+        <div class="shot">
+          <picture>
+            <source
+              srcset="img/window-dark.png"
+              media="(prefers-color-scheme: dark)"
+            />
+            <img
+              src="img/window-light.png"
+              alt="Intercept main window: Screen, Audio and Screen + Audio modes, a record button with input and output level meters, and a list of recordings"
+            />
+          </picture>
+        </div>
+      </div>
+
+      <div class="modes">
+        <div class="mode">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          >
+            <rect x="3" y="4" width="18" height="12" rx="2" />
+            <path d="M9 20h6M12 16v4" />
+          </svg>
+          <h3>Screen</h3>
+          <p>The display, with no sound. Doesn't need the microphone.</p>
+          <span class="file mono">.mp4 · HEVC · native resolution</span>
+        </div>
+        <div class="mode">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          >
+            <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
+          </svg>
+          <h3>Audio</h3>
+          <p>
+            Your microphone and everything your Mac plays, mixed into one track.
+          </p>
+          <span class="file mono">.m4a · AAC · 48 kHz stereo</span>
+        </div>
+        <div class="mode">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          >
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4" />
+          </svg>
+          <h3>Screen + Audio</h3>
+          <p>The screen and both sides of the sound, in one video.</p>
+          <span class="file mono">.mp4 · 30 fps · one audio track</span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="feat">
+          <h3>Both sides of every call</h3>
+          <p>
+            Your voice and the other person's are mixed into one track, so any
+            player hears the whole conversation.
+          </p>
+        </div>
+        <div class="feat">
+          <h3>One display or all of them</h3>
+          <p>
+            Record the main display, or every display side by side, laid out the
+            way they sit in System Settings.
+          </p>
+        </div>
+        <div class="feat">
+          <h3>Crash-safe</h3>
+          <p>
+            Intercept saves every 10 seconds. If the Mac crashes or loses power,
+            it finishes the recording next time it opens.
+          </p>
+        </div>
+        <div class="feat">
+          <h3>Pauses when the display sleeps</h3>
+          <p>
+            It saves what it has, shows Paused, and starts a new file by itself
+            when you wake the Mac and unlock it.
+          </p>
+        </div>
+        <div class="feat">
+          <h3>One key</h3>
+          <p>
+            Press the big ember button, or <kbd>⇧⌘R</kbd>. It also lives in the
+            menu bar, with a timer while it records.
+          </p>
+        </div>
+        <div class="feat">
+          <h3>Plain files, in your folder</h3>
+          <p>
+            Recordings go to <b>~/Documents/Intercept</b>, or a folder you pick,
+            and open in QuickTime, VLC or any editor.
+          </p>
+        </div>
+      </div>
+
+      <div class="band">
+        <h2>Nothing leaves your Mac</h2>
+        <p>
+          Intercept has no accounts, no analytics and no servers. It never
+          connects to the internet. Your recordings are ordinary files on your
+          disk, and only you decide where they go.
+        </p>
+      </div>
+
+      <section id="download">
+        <span class="mono">Get started</span>
+        <ol class="install">
+          <li>
+            Download the <b>.dmg</b> and drag <b>Intercept</b> to Applications.
+          </li>
+          <li>
+            Open it and grant <b>Microphone</b> and
+            <b>Screen &amp; System Audio Recording</b> from the main window,
+            then press <b>Relaunch</b>.
+          </li>
+          <li>
+            Pick a mode and press the record button, or <kbd>⇧⌘R</kbd>. Press it
+            again to stop.
+          </li>
+        </ol>
+        <p style="font-size: 13px; color: var(--text-3)">
+          Requires macOS 26 (Tahoe) or later on Apple Silicon. Signed with a
+          Developer ID and notarized by Apple, so it opens without warnings.
+          Please follow the law where you live and tell people when you record
+          them.
+        </p>
+      </section>
+
+      <footer>
+        © 2026 Girish Gupta ·
+        <a href="https://www.girishgupta.com">www.girishgupta.com</a> · From the
+        maker of <a href="https://onetaptranscribe.com">One Tap Transcribe</a
+        ><br />
+        Records your Mac on your Mac. Nothing leaves it.
+      </footer>
+    </div>
+  </body>
+</html>
