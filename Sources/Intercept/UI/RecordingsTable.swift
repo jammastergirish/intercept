@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import GraphiteEmber
 
 /// All recordings in the folder, newest first. Double-click opens a file;
 /// hovering shows Show-in-Finder and Open buttons; right-click for more.
@@ -8,45 +9,23 @@ struct RecordingsTable: View {
     var maxHeight: CGFloat = 248
 
     var body: some View {
-        VStack(spacing: 0) {
+        TableCard(state.recordings,
+                  emptyMessage: "Nothing recorded yet. Press the record button.",
+                  maxRowsWithoutScroll: 7,
+                  scrollHeight: maxHeight,
+                  dividerInset: 34) {
             header
-            Divider().overlay(Theme.divider)
-            if state.recordings.isEmpty {
-                Text("Nothing recorded yet. Press the record button.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 14)
-            } else if state.recordings.count <= 7 {
-                rows   // short list: no scroll area needed
-            } else {
-                ScrollView { rows }
-                    .frame(height: maxHeight)
-            }
-        }
-        .background(Theme.cardBG, in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.fieldBorder, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-    }
-
-    private var rows: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(state.recordings.enumerated()), id: \.element.id) { i, item in
-                RecordingRow(item: item)
-                if i < state.recordings.count - 1 {
-                    Divider().overlay(Theme.divider).padding(.leading, 34)
-                }
-            }
+        } row: { item in
+            RecordingRow(item: item)
         }
     }
 
     private var header: some View {
         HStack(spacing: 8) {
             Color.clear.frame(width: 16, height: 1)
-            column("Recorded", alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
-            column("Length", alignment: .trailing).frame(width: 64, alignment: .trailing)
-            column("Size", alignment: .trailing).frame(width: 58, alignment: .trailing)
+            column("Recorded").frame(maxWidth: .infinity, alignment: .leading)
+            column("Length").frame(width: 64, alignment: .trailing)
+            column("Size").frame(width: 58, alignment: .trailing)
             Color.clear.frame(width: 64, height: 1)
         }
         .padding(.horizontal, 10)
@@ -54,7 +33,7 @@ struct RecordingsTable: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func column(_ title: String, alignment: Alignment) -> some View {
+    private func column(_ title: String) -> some View {
         MonoLabel(text: title, size: 10, tracking: 0.8, color: Theme.monoFaint)
     }
 }
@@ -96,9 +75,7 @@ private struct RecordingRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(hover ? Theme.emberTint : Color.clear)
-        .contentShape(Rectangle())
-        .onHover { hover = $0 }
+        .tableRowHover($hover)
         .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
         .help(item.url.lastPathComponent)
         .contextMenu {

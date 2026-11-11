@@ -1,10 +1,15 @@
 import SwiftUI
+import GraphiteEmber
 import AppKit
 
 @main
 struct InterceptApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
+
+    init() {
+        AppArtwork.writeIconsetIfRequested()
+    }
 
     var body: some Scene {
         Window("Intercept", id: "home") {

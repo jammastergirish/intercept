@@ -1,4 +1,5 @@
 import SwiftUI
+import GraphiteEmber
 import AppKit
 
 /// Main window — "Graphite & Ember": mono titlebar, mode picker, inverse
@@ -8,7 +9,7 @@ struct HomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            titlebar
+            WindowTitleBar(title: "Intercept", badge: state.status.badge)
             Divider().overlay(Theme.divider)
             content
         }
@@ -23,19 +24,6 @@ struct HomeView: View {
             state.refreshPermissions()
             state.refreshRecordings()
         }
-    }
-
-    // MARK: Titlebar
-
-    private var titlebar: some View {
-        HStack(spacing: 10) {
-            MonoLabel(text: "Intercept", size: 12, tracking: 0.8, color: Theme.textPrimary)
-            Spacer()
-            StatusBadge(text: state.status.badge)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 30)          // sits just below the traffic lights
-        .padding(.bottom, 12)
     }
 
     // MARK: Content
@@ -56,11 +44,11 @@ struct HomeView: View {
             recordBanner
 
             if case .failed(let message) = state.status {
-                notice(message)
+                NoticeBanner(message)
             }
 
             if let note = state.recoveryNote {
-                notice(note) { state.recoveryNote = nil }
+                NoticeBanner(note) { state.recoveryNote = nil }
             }
 
             if !state.allPermissionsGranted {
@@ -232,28 +220,6 @@ struct HomeView: View {
     }
 
     // MARK: Helpers
-
-    private func notice(_ message: String, dismiss: (() -> Void)? = nil) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11)).foregroundStyle(Theme.emberText)
-            Text(message)
-                .font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let dismiss {
-                Spacer(minLength: 4)
-                Button(action: dismiss) {
-                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-                .buttonStyle(.plain)
-                .help("Dismiss")
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.emberTint, in: RoundedRectangle(cornerRadius: 8))
-    }
 
     private func abbreviated(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

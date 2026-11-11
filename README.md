@@ -39,9 +39,16 @@ buttons:
 ./build_app.sh release run       # build and launch from ./build
 ```
 
-Signing reuses One Tap Transcribe's local self-signed identity
-(`./setup_signing.sh` in that project) if it exists, so rebuilds keep their
-permissions. Otherwise the script signs ad-hoc.
+Intercept shares its "Graphite & Ember" theme, components and build scripts with
+One Tap Transcribe through the local **GraphiteEmber** package, which must be
+checked out next to this folder (`../GraphiteEmber`). `build_app.sh`,
+`make_dmg.sh` and `release.sh` here are thin wrappers around the scripts in
+`GraphiteEmber/Scripts`; this app's name and bundle ID live in `app.conf`.
+
+Signing uses the local self-signed identity that
+`../GraphiteEmber/Scripts/setup_signing.sh` creates (the same one One Tap
+Transcribe uses) if it exists, so rebuilds keep their permissions. Otherwise
+the script signs ad-hoc.
 
 ### Public release (signed + notarized)
 

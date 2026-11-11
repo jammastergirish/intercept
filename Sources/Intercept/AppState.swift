@@ -1,4 +1,5 @@
 import SwiftUI
+import GraphiteEmber
 import AppKit
 import AVFoundation
 import ScreenCaptureKit

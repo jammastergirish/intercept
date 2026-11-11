@@ -1,4 +1,5 @@
 import SwiftUI
+import GraphiteEmber
 import AppKit
 
 /// Menu-bar dropdown panel (MenuBarExtra `.window` style).
@@ -8,25 +9,9 @@ struct MenuPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
+            MenuPanelHeader(title: "Intercept", badge: state.status.badge, subtitle: subtitle) {
                 LogoSquircle(side: 24)
-                Text("Intercept")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-                StatusBadge(text: state.status.badge)
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 7)
-
-            Text(subtitle)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.textTertiary)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
-
-            Divider().overlay(Theme.divider)
 
             VStack(spacing: 2) {
                 MenuRow(title: state.isActive ? "Stop recording" : "Start recording",
@@ -59,33 +44,5 @@ struct MenuPanel: View {
         case .paused: return "Paused · resumes when you unlock"
         default: return "Mode: \(state.mode.title)"
         }
-    }
-}
-
-private struct MenuRow: View {
-    let title: String
-    let systemImage: String
-    let action: () -> Void
-    @State private var hover = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 12))
-                    .frame(width: 16)
-                    .foregroundStyle(hover ? Theme.emberText : Theme.textSecondary)
-                Text(title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(hover ? Theme.emberTint : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hover = $0 }
     }
 }

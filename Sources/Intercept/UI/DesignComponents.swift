@@ -1,25 +1,9 @@
 import SwiftUI
 import AppKit
+import GraphiteEmber
 
-// Components shared with One Tap Transcribe's "Graphite & Ember" design.
-
-// MARK: - Status badge (READY / RECORDING)
-
-struct StatusBadge: View {
-    var text: String
-    var color: Color = Theme.emberText
-    var tint: Color = Theme.emberTint
-
-    var body: some View {
-        Text(text.uppercased())
-            .font(.mono(10, weight: .semibold))
-            .tracking(0.5)
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(tint, in: RoundedRectangle(cornerRadius: 4))
-    }
-}
+// Intercept's own pieces. The shared theme and components come from the
+// GraphiteEmber package.
 
 // MARK: - Record mark (ember ring + dot)
 
@@ -36,34 +20,10 @@ struct RecordGlyph: View {
     }
 }
 
-// MARK: - Logo squircle
-
-struct LogoSquircle: View {
-    var side: CGFloat = 24
-    var body: some View {
-        RoundedRectangle(cornerRadius: side * 0.23, style: .continuous)
-            .fill(Theme.squircleBG)
-            .frame(width: side, height: side)
-            .overlay(RecordGlyph(side: side * 0.56))
-    }
-}
-
-// MARK: - Ember spinner
-
-struct EmberSpinner: View {
-    var size: CGFloat = 14
-    @State private var angle: Double = 0
-    var body: some View {
-        ZStack {
-            Circle().stroke(Theme.ember.opacity(0.35), lineWidth: 2)
-            Circle().trim(from: 0, to: 0.3)
-                .stroke(Theme.ember, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(angle))
-        }
-        .frame(width: size, height: size)
-        .onAppear {
-            withAnimation(.linear(duration: 0.85).repeatForever(autoreverses: false)) { angle = 360 }
-        }
+extension LogoSquircle where Mark == RecordGlyph {
+    /// The squircle with Intercept's record mark.
+    init(side: CGFloat = 24) {
+        self.init(side: side) { RecordGlyph(side: $0 * 0.56) }
     }
 }
 
@@ -139,22 +99,6 @@ struct SegmentPicker<Value: Hashable>: View {
     }
 }
 
-// MARK: - Ghost/bordered button style ("Folder…", "Quit")
-
-struct GraphiteButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13))
-            .foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(Theme.buttonBG, in: RoundedRectangle(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.fieldBorder, lineWidth: 1))
-            .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
-            .opacity(configuration.isPressed ? 0.7 : 1)
-    }
-}
-
 /// Small ember-text link-style button ("Grant", "Reveal").
 struct EmberLinkButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
@@ -172,33 +116,29 @@ struct EmberLinkButtonStyle: ButtonStyle {
 
 enum AppArtwork {
     /// Near-black squircle with an ember ring and record dot.
-    static func appIcon(side: CGFloat = 512) -> NSImage {
-        let img = NSImage(size: NSSize(width: side, height: side))
-        img.lockFocus()
-        let inset = side * 0.055
-        let rect = NSRect(x: inset, y: inset, width: side - 2 * inset, height: side - 2 * inset)
-        NSColor(Theme.squircleBG).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: rect.width * 0.23, yRadius: rect.width * 0.23).fill()
-        drawMark(in: rect, color: NSColor(Theme.ember), ringFraction: 0.27, dotFraction: 0.15, lineFraction: 0.055)
-        img.unlockFocus()
-        return img
+    static func appIcon() -> NSImage {
+        SquircleIcon.image(mark: drawAppMark)
     }
 
-    /// Monochrome template mark for the menu bar. `filled` while recording.
+    /// Handles the build script's `--write-iconset <folder>` launch flag.
+    static func writeIconsetIfRequested() {
+        SquircleIcon.writeIconsetIfRequested(mark: drawAppMark)
+    }
+
+    /// Monochrome template mark for the menu bar. Solid dot while recording.
     static func menuBarIcon(recording: Bool) -> NSImage {
-        let size = NSSize(width: 16, height: 16)
-        let img = NSImage(size: size)
-        img.lockFocus()
-        let rect = NSRect(origin: .zero, size: size)
-        if recording {
-            NSColor.black.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
-        } else {
-            drawMark(in: rect, color: .black, ringFraction: 0.42, dotFraction: 0.2, lineFraction: 0.11)
+        SquircleIcon.template(size: NSSize(width: 16, height: 16)) { rect in
+            if recording {
+                NSColor.black.setFill()
+                NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+            } else {
+                drawMark(in: rect, color: .black, ringFraction: 0.42, dotFraction: 0.2, lineFraction: 0.11)
+            }
         }
-        img.unlockFocus()
-        img.isTemplate = true
-        return img
+    }
+
+    private static func drawAppMark(in rect: NSRect) {
+        drawMark(in: rect, color: NSColor(Theme.ember), ringFraction: 0.27, dotFraction: 0.15, lineFraction: 0.055)
     }
 
     private static func drawMark(in rect: NSRect, color: NSColor,

@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import AppKit
 import SwiftUI
+import GraphiteEmber
 import ScreenCaptureKit
 
 /// Developer check: `Intercept.app/Contents/MacOS/Intercept --selftest <audio|screen> <seconds> <out-file>`
