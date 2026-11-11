@@ -1,0 +1,15 @@
+{
+  "originHash" : "fb189c2d8cc762b0d8fe40d5bcf29be7dfdf20ad77c5d47ede75d64df9d20f49",
+  "pins" : [
+    {
+      "identity" : "graphiteember",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jammastergirish/GraphiteEmber.git",
+      "state" : {
+        "revision" : "a1d889536d44f4b3fe08037b3c5f0a7987afbf74",
+        "version" : "1.0.0"
+      }
+    }
+  ],
+  "version" : 3
+}
