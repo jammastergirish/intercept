@@ -47,7 +47,7 @@ struct RecordingsTable: View {
             column("Recorded", alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
             column("Length", alignment: .trailing).frame(width: 64, alignment: .trailing)
             column("Size", alignment: .trailing).frame(width: 58, alignment: .trailing)
-            Color.clear.frame(width: 44, height: 1)
+            Color.clear.frame(width: 64, height: 1)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -89,8 +89,9 @@ private struct RecordingRow: View {
                     NSWorkspace.shared.activateFileViewerSelecting([item.url])
                 }
                 iconButton("play.fill", help: "Open") { NSWorkspace.shared.open(item.url) }
+                iconButton("trash", help: "Move to Trash") { state.moveToTrash(item) }
             }
-            .frame(width: 44)
+            .frame(width: 64)
             .opacity(hover ? 1 : 0)
         }
         .padding(.horizontal, 10)
