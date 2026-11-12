@@ -55,6 +55,9 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// Called if you stop sharing from macOS's own screen-recording menu.
     var onUserStopped: (() -> Void)?
+    /// Every piece of sound as it's recorded (true = microphone), e.g. for live
+    /// transcription. Called on the capture queue.
+    var onAudio: ((CanonicalAudio.Chunk, Bool) -> Void)?
 
     /// How many displays the recording covers (known after `start`).
     private(set) var displayCount = 0
@@ -307,6 +310,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func write(_ chunk: CanonicalAudio.Chunk, isMic: Bool) {
+        onAudio?(chunk, isMic)
         let peak = chunk.peak
         lock.withLock {
             if isMic { _inLevel = max(_inLevel, peak) } else { _outLevel = max(_outLevel, peak) }

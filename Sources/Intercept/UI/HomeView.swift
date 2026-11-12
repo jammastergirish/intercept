@@ -7,6 +7,8 @@ import AppKit
 /// permissions, recordings table, footer.
 struct HomeView: View {
     @EnvironmentObject var state: AppState
+    @Environment(\.openWindow) private var openWindow
+    @State private var showKeySheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +25,7 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
             state.refreshDisplays()
         }
+        .sheet(isPresented: $showKeySheet) { APIKeySheet().environmentObject(state) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             state.refreshPermissions()
             state.refreshRecordings()
@@ -37,6 +40,14 @@ struct HomeView: View {
             optionsCard
 
             recordBanner
+
+            if let live = state.live {
+                TranscriptTicker(live: live) { openWindow(id: "live-transcript") }
+            }
+
+            if let problem = state.transcriptProblem {
+                NoticeBanner(problem) { state.transcriptProblem = nil }
+            }
 
             if case .failed(let message) = state.status {
                 NoticeBanner(message)
@@ -128,6 +139,14 @@ struct HomeView: View {
                 Toggle("Record what the Mac plays", isOn: $state.settings.macSound)
                     .toggleStyle(EmberCheckboxStyle(fontSize: 12))
                     .disabled(state.isLocked)
+            }))
+            rows.append(AnyView(optionRow("Transcribe") {
+                Toggle("With ElevenLabs", isOn: $state.settings.transcribe)
+                    .toggleStyle(EmberCheckboxStyle(fontSize: 12))
+                    .disabled(state.isLocked)
+                Button(state.hasAPIKey ? "Key…" : "Add key…") { showKeySheet = true }
+                    .buttonStyle(EmberLinkButtonStyle())
+                    .help(state.hasAPIKey ? "Change or remove your ElevenLabs API key" : "Add your ElevenLabs API key")
             }))
         }
         if s.camera {

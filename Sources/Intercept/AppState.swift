@@ -44,6 +44,16 @@ final class AppState: ObservableObject {
     @Published private(set) var outLevel: Float = 0    // sound the Mac plays
     /// The display is off: only sound is being recorded until it's back.
     @Published private(set) var screenPaused = false
+    /// Live transcription of the recording in progress (when Transcribe is on).
+    @Published private(set) var live: LiveTranscriber?
+    /// Whether an ElevenLabs key is saved in the Keychain.
+    @Published private(set) var hasAPIKey = APIKeyStore.hasKey
+    /// Recordings being transcribed right now.
+    @Published private(set) var transcribing: Set<URL> = []
+    /// Bumped whenever a transcript file changes, so open windows reload.
+    @Published private(set) var transcriptVersion = 0
+    /// Why the last transcription failed, if it did.
+    @Published var transcriptProblem: String?
     /// Every recording in the folder, newest first.
     @Published private(set) var recordings: [RecordingItem] = []
     /// Message about recordings finished after a crash, shown until dismissed.
@@ -193,6 +203,10 @@ final class AppState: ObservableObject {
         session.onUserStopped = { [weak self] in
             Task { @MainActor in self?.stop() }
         }
+        // Live transcription: everything recorded is also streamed to ElevenLabs.
+        let live: LiveTranscriber? = settings.transcribe && settings.hasAudio && hasAPIKey
+            ? LiveTranscriber(mic: settings.recordsMic, macSound: settings.recordsMacSound) : nil
+        if let live { session.onAudio = { chunk, isMic in live.feed(chunk, isMic: isMic) } }
         self.session = session
         self.finalURL = final
         status = .starting
@@ -203,6 +217,8 @@ final class AppState: ObservableObject {
                 startedAt = Date()
                 elapsed = 0
                 status = .recording
+                live?.start()
+                self.live = live
                 preventSleep(true)
                 startTicker()
             } catch {
@@ -224,7 +240,14 @@ final class AppState: ObservableObject {
         Task {
             do {
                 let raw = try await session.stop()
-                let (_, mixError) = await Mixdown.finish(raw: raw, to: finalURL, fileType: fileType)
+                let (saved, mixError) = await Mixdown.finish(raw: raw, to: finalURL, fileType: fileType)
+                // Keep the live transcript as a stand-in, then do it properly.
+                if let live = self.live {
+                    await live.finish()
+                    if !live.lines.isEmpty { try? live.transcript.save(for: saved) }
+                    self.live = nil
+                    transcribe(saved)
+                }
                 refreshRecordings()
                 status = mixError.map { .failed("Saved an unmixed .mov instead (\($0.localizedDescription)).") } ?? .idle
             } catch {
@@ -260,9 +283,73 @@ final class AppState: ObservableObject {
     }
 
     func moveToTrash(_ item: RecordingItem) {
-        NSWorkspace.shared.recycle([item.url]) { [weak self] _, _ in
+        let transcript = Transcript.fileURL(for: item.url)
+        let urls = [item.url] + (Transcript.exists(for: item.url) ? [transcript] : [])
+        NSWorkspace.shared.recycle(urls) { [weak self] _, _ in
             Task { @MainActor in self?.refreshRecordings() }
         }
+    }
+
+    /// Rename a recording (and its transcript). Returns false if the name is
+    /// empty or taken.
+    @discardableResult
+    func rename(_ item: RecordingItem, to newName: String) -> Bool {
+        let clean = newName.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, !clean.hasPrefix(".") else { return false }
+        let target = item.url.deletingLastPathComponent().appendingPathComponent(clean)
+            .appendingPathExtension(item.url.pathExtension)
+        guard target != item.url else { return true }
+        guard !FileManager.default.fileExists(atPath: target.path),
+              (try? FileManager.default.moveItem(at: item.url, to: target)) != nil else { return false }
+        if Transcript.exists(for: item.url) {
+            try? FileManager.default.moveItem(at: Transcript.fileURL(for: item.url), to: Transcript.fileURL(for: target))
+        }
+        refreshRecordings()
+        transcriptVersion += 1
+        return true
+    }
+
+    // MARK: Transcription
+
+    func setAPIKey(_ key: String) -> Bool {
+        let ok = APIKeyStore.save(key)
+        hasAPIKey = APIKeyStore.hasKey
+        return ok
+    }
+
+    func removeAPIKey() {
+        APIKeyStore.delete()
+        hasAPIKey = false
+    }
+
+    /// Transcribe a recording with ElevenLabs and save it next to the file.
+    /// Keeps any speaker names already given.
+    func transcribe(_ recording: URL) {
+        guard hasAPIKey, !transcribing.contains(recording) else { return }
+        transcribing.insert(recording)
+        transcriptProblem = nil
+        Task {
+            do {
+                var transcript = try await Scribe.transcribe(recording)
+                transcript.speakerNames = Transcript.load(for: recording)?.speakerNames ?? [:]
+                try transcript.save(for: recording)
+            } catch {
+                transcriptProblem = "Couldn't transcribe \(recording.deletingPathExtension().lastPathComponent): \(error.localizedDescription)"
+            }
+            transcribing.remove(recording)
+            transcriptVersion += 1
+            refreshRecordings()
+        }
+    }
+
+    /// Give a speaker a name in a recording's transcript.
+    func nameSpeaker(_ speaker: String, as name: String, in recording: URL) {
+        guard var t = Transcript.load(for: recording) else { return }
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.isEmpty { t.speakerNames[speaker] = nil } else { t.speakerNames[speaker] = clean }
+        try? t.save(for: recording)
+        transcriptVersion += 1
     }
 
     // MARK: Folder
@@ -338,6 +425,7 @@ enum SettingsStore {
         s.micID = d.string(forKey: "mic.id")
         if d.object(forKey: "macSound") != nil { s.macSound = d.bool(forKey: "macSound") }
         s.cameraID = d.string(forKey: "camera.id")
+        s.transcribe = d.bool(forKey: "transcribe")
         return s
     }
 
@@ -350,5 +438,6 @@ enum SettingsStore {
         d.set(s.micID, forKey: "mic.id")
         d.set(s.macSound, forKey: "macSound")
         d.set(s.cameraID, forKey: "camera.id")
+        d.set(s.transcribe, forKey: "transcribe")
     }
 }

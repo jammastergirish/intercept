@@ -36,6 +36,32 @@ enum SelfTest {
             runAppTest(seconds: seconds, folder: URL(fileURLWithPath: args[i + 2], isDirectory: true))
             return
         }
+        // `--snapshot-transcript <png>`: render sample transcript lines (dark) and quit.
+        if let i = args.firstIndex(of: "--snapshot-transcript"), args.count > i + 1 {
+            var t = Transcript(lines: [
+                .init(id: 0, start: 0, end: 1, speaker: "speaker_0", text: "Good."),
+                .init(id: 1, start: 1, end: 3, speaker: "speaker_1", text: "Okay. Let's talk about your proposal."),
+                .init(id: 2, start: 14, end: 27, speaker: "speaker_0",
+                      text: "I think that you are a very good speaker. The pathos side doesn't come across as well."),
+                .init(id: 3, start: 28, end: 29, speaker: "speaker_2", text: "Yeah."),
+            ], model: "scribe_v2")
+            t.speakerNames = ["speaker_0": "Girish"]
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+            let view = VStack(spacing: 6) {
+                ForEach(t.lines) { line in
+                    TranscriptLineRow(line: line, speakerName: line.speaker.map(t.name(of:)),
+                                      colorIndex: line.speaker.map(t.colorIndex(of:)), onRename: { _ in })
+                }
+            }
+            .padding(20).frame(width: 700).background(Theme.windowBG)
+            .environment(\.colorScheme, .dark)
+            let r = ImageRenderer(content: view); r.scale = 2
+            if let img = r.nsImage, let tiff = img.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: args[i + 1]))
+            }
+            exit(0)
+        }
         // `--recover <folder>`: finish leftover capture files in a folder and quit.
         if let i = args.firstIndex(of: "--recover"), args.count > i + 1 {
             let folder = URL(fileURLWithPath: args[i + 1], isDirectory: true)

@@ -17,6 +17,9 @@ struct CaptureSettings: Equatable {
     var macSound = true
     /// Camera: which one (nil = the system default).
     var cameraID: String?
+    /// Transcribe the sound with ElevenLabs: live while recording, then
+    /// properly with speakers once it stops.
+    var transcribe = false
 
     var hasVideo: Bool { screen || camera }
     var recordsMic: Bool { audio && useMic }

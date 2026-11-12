@@ -1,4 +1,5 @@
 import Foundation
+import GraphiteEmber
 import AVFoundation
 
 /// A finished recording on disk.
@@ -7,7 +8,18 @@ struct RecordingItem: Identifiable, Equatable {
     let date: Date
     let bytes: Int64
     var duration: TimeInterval?
+    var hasTranscript = false
     var id: URL { url }
+
+    /// The file name without extension, e.g. "Intercept 2026-11-12 at 19.53.40".
+    var name: String { url.deletingPathExtension().lastPathComponent }
+
+    /// What the table shows: your name for it, or, for an untouched
+    /// "Intercept <date> at <time>", just the date ("Today 19:53").
+    var displayName: String {
+        name.range(of: #"^Intercept \d{4}-\d{2}-\d{2} at \d{2}\.\d{2}\.\d{2}( \d+)?$"#, options: .regularExpression) != nil
+            ? Format.when(date) : name
+    }
     var isVideo: Bool { url.pathExtension.lowercased() != "m4a" }
 }
 
@@ -36,7 +48,8 @@ enum RecordingLibrary {
                 duration = seconds
                 lock.withLock { durationCache[key] = seconds }
             }
-            items.append(RecordingItem(url: url, date: date, bytes: bytes, duration: duration))
+            items.append(RecordingItem(url: url, date: date, bytes: bytes, duration: duration,
+                                       hasTranscript: Transcript.exists(for: url)))
         }
         return items.sorted { $0.date > $1.date }
     }

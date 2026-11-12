@@ -19,6 +19,20 @@ struct InterceptApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
 
+        // A recording's transcript, one window per file.
+        WindowGroup("Transcript", id: "transcript", for: URL.self) { $url in
+            if let url {
+                TranscriptWindow(recording: url).environmentObject(state)
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+
+        // The transcript of the recording in progress.
+        Window("Live transcript", id: "live-transcript") {
+            LiveTranscriptWindow().environmentObject(state)
+        }
+        .windowStyle(.hiddenTitleBar)
+
         MenuBarExtra {
             MenuPanel()
                 .environmentObject(state)
