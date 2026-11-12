@@ -41,7 +41,6 @@ struct MenuPanel: View {
         switch state.status {
         case .recording: return "\(Format.clock(state.elapsed)) · \(state.mode.title)"
         case .saving: return "Saving file…"
-        case .paused: return "Paused · resumes when you unlock"
         default: return "Mode: \(state.mode.title)"
         }
     }

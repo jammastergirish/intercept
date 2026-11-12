@@ -2,15 +2,13 @@ import SwiftUI
 import GraphiteEmber
 import AppKit
 import AVFoundation
-import ScreenCaptureKit
+import IOKit.pwr_mgt
 
 @MainActor
 final class AppState: ObservableObject {
 
     enum Status: Equatable {
         case idle, starting, recording, saving, failed(String)
-        /// macOS took the display away (it slept). We resume on wake/unlock.
-        case paused
 
         var badge: String {
             switch self {
@@ -19,7 +17,6 @@ final class AppState: ObservableObject {
             case .recording: return "Recording"
             case .saving: return "Saving"
             case .failed: return "Error"
-            case .paused: return "Paused"
             }
         }
     }
@@ -44,6 +41,8 @@ final class AppState: ObservableObject {
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var inLevel: Float = 0     // microphone
     @Published private(set) var outLevel: Float = 0    // sound the Mac plays
+    /// The display is off: only sound is being recorded until it's back.
+    @Published private(set) var screenPaused = false
     /// Every recording in the folder, newest first.
     @Published private(set) var recordings: [RecordingItem] = []
     /// Message about recordings finished after a crash, shown until dismissed.
@@ -52,14 +51,18 @@ final class AppState: ObservableObject {
     @Published private(set) var screenGranted = Permissions.screenAuthorized()
 
     var isRecording: Bool { status == .recording }
-    /// Recording, or paused and waiting to resume. Stop ends either.
-    var isActive: Bool { status == .recording || status == .paused }
+    /// A recording is running. (Kept separate from `isRecording` for the UI.)
+    var isActive: Bool { status == .recording }
     var isBusy: Bool { status == .starting || status == .saving }
-    /// Settings and Quit are locked while a recording is running, paused or saving.
+    /// Settings and Quit are locked while a recording is running or saving.
     var isLocked: Bool { isActive || isBusy }
     var allPermissionsGranted: Bool { micGranted && screenGranted }
     /// Screen-only recording doesn't use the microphone.
-    private var neededPermissionsGranted: Bool { screenGranted && (micGranted || !mode.hasAudio) }
+    /// Audio needs the microphone; anything with video needs screen recording.
+    /// (System sound has its own permission, which macOS asks for on first use.)
+    private var neededPermissionsGranted: Bool {
+        (micGranted || !mode.hasAudio) && (screenGranted || !mode.hasVideo)
+    }
 
     // MARK: Private
 
@@ -67,8 +70,8 @@ final class AppState: ObservableObject {
     private var startedAt: Date?
     private var ticker: Timer?
     private var finalURL: URL?
-    private var resumeTimer: Timer?
-    private var wakeObservers: [NSObjectProtocol] = []
+    /// Keeps the Mac from sleeping on its own while recording.
+    private var noSleepAssertion: IOPMAssertionID = 0
 
     init() {
         let defaults = UserDefaults.standard
@@ -145,20 +148,17 @@ final class AppState: ObservableObject {
     func toggle() {
         switch status {
         case .recording: stop()
-        case .paused: cancelResume(); status = .idle
         case .idle, .failed: start()
         default: break
         }
     }
 
-    func start() { start(resuming: false) }
-
-    private func start(resuming: Bool) {
+    func start() {
         refreshPermissions()
         guard neededPermissionsGranted else {
             if !micGranted && mode.hasAudio { grantMicrophone() }
-            if !screenGranted { grantScreen() }
-            status = .failed("Grant both permissions first.")
+            if !screenGranted && mode.hasVideo { grantScreen() }
+            status = .failed("Grant the permissions above first.")
             return
         }
 
@@ -174,14 +174,9 @@ final class AppState: ObservableObject {
         let raw = folder.appendingPathComponent(".\(name).capture.mov")
 
         let session = CaptureSession(mode: mode, displays: displayChoice, rawURL: raw)
-        session.onUnexpectedStop = { [weak self] error in
-            // If you pressed Stop in macOS's own screen-recording menu, stay
-            // stopped. Anything else (display slept, screen locked with the
-            // display off) means: save what we have and resume when it's back.
-            let ns = error as NSError?
-            let userStopped = ns?.domain == SCStreamErrorDomain
-                && ns?.code == SCStreamError.Code.userStopped.rawValue
-            Task { @MainActor in self?.stop(thenResume: !userStopped) }
+        // Pressing Stop in macOS's own screen-recording menu ends the recording.
+        session.onUserStopped = { [weak self] in
+            Task { @MainActor in self?.stop() }
         }
         self.session = session
         self.finalURL = final
@@ -193,22 +188,21 @@ final class AppState: ObservableObject {
                 startedAt = Date()
                 elapsed = 0
                 status = .recording
+                preventSleep(true)
                 startTicker()
             } catch {
                 self.session = nil
                 try? FileManager.default.removeItem(at: raw)
-                // While resuming, the display may simply not be back yet.
-                status = resuming ? .paused : .failed(error.localizedDescription)
+                status = .failed(error.localizedDescription)
             }
         }
     }
 
-    func stop() { stop(thenResume: false) }
-
-    private func stop(thenResume: Bool) {
+    func stop() {
         guard status == .recording, let session, let finalURL else { return }
         status = .saving
         stopTicker()
+        preventSleep(false)
         let mode = session.mode
         self.session = nil
 
@@ -221,52 +215,23 @@ final class AppState: ObservableObject {
             } catch {
                 status = .failed(error.localizedDescription)
             }
-            if thenResume { beginWaitingToResume() }
         }
     }
 
-    // MARK: Resume after the display sleeps
+    // MARK: Staying awake
 
-    private func beginWaitingToResume() {
-        status = .paused
-        // Try again whenever the display wakes or the screen unlocks, and
-        // every few seconds as a fallback.
-        if wakeObservers.isEmpty {
-            let retry: (Notification) -> Void = { [weak self] _ in
-                Task { @MainActor in self?.attemptResume() }
-            }
-            wakeObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
-                forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main, using: retry))
-            wakeObservers.append(DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main, using: retry))
+    /// While recording, stop the Mac going to sleep when idle. The display may
+    /// still turn off (sound keeps recording; video resumes when it's back).
+    /// Closing the lid or choosing Sleep still sleeps the Mac.
+    private func preventSleep(_ on: Bool) {
+        if on, noSleepAssertion == 0 {
+            IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleSystemSleep as CFString,
+                                        IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                        "Intercept is recording" as CFString, &noSleepAssertion)
+        } else if !on, noSleepAssertion != 0 {
+            IOPMAssertionRelease(noSleepAssertion)
+            noSleepAssertion = 0
         }
-        resumeTimer?.invalidate()
-        resumeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.attemptResume() }
-        }
-    }
-
-    private func attemptResume() {
-        guard status == .paused else { return }
-        // Capture fails while the screen is locked, so don't even try then.
-        if let d = CGSessionCopyCurrentDictionary() as? [String: Any],
-           (d["CGSSessionScreenIsLocked"] as? Int ?? 0) == 1 { return }
-        start(resuming: true)
-        // `start` sets .recording on success or falls back to .paused.
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if status == .recording { cancelResume() }
-        }
-    }
-
-    private func cancelResume() {
-        resumeTimer?.invalidate()
-        resumeTimer = nil
-        for o in wakeObservers {
-            NSWorkspace.shared.notificationCenter.removeObserver(o)
-            DistributedNotificationCenter.default().removeObserver(o)
-        }
-        wakeObservers = []
     }
 
     // MARK: Recordings list
@@ -316,11 +281,13 @@ final class AppState: ObservableObject {
         ticker = nil
         inLevel = 0
         outLevel = 0
+        screenPaused = false
     }
 
     private func tick() {
         if let startedAt { elapsed = Date().timeIntervalSince(startedAt) }
         guard let session else { return }
+        if screenPaused != session.isVideoPaused { screenPaused = session.isVideoPaused }
         let levels = session.takeLevels()
         // Fast attack, slow release so the meters read smoothly.
         inLevel = max(Self.meter(levels.input), inLevel * 0.82)

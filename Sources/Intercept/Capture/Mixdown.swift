@@ -77,10 +77,17 @@ enum Mixdown {
             throw CaptureError.writerFailed(writer.error?.localizedDescription ?? "couldn't write file")
         }
         writer.startSession(atSourceTime: .zero)
+        let end = try await asset.load(.duration)
 
         await withTaskGroup(of: Void.self) { group in
             for (i, pair) in pairs.enumerated() {
-                group.addTask { await pump(from: pair.0, into: pair.1, label: "intercept.mixdown.\(i)") }
+                // Stretch the last video frame to the end of the recording, so
+                // if the display was off at the end the picture holds instead
+                // of the video stopping early.
+                let stretchTo: CMTime? = pair.1.mediaType == .video ? end : nil
+                group.addTask {
+                    await pump(from: pair.0, into: pair.1, stretchLastTo: stretchTo, label: "intercept.mixdown.\(i)")
+                }
             }
         }
 
@@ -88,27 +95,62 @@ enum Mixdown {
             writer.cancelWriting()
             throw CaptureError.writerFailed(reader.error?.localizedDescription ?? "read failed")
         }
+        writer.endSession(atSourceTime: end)
         await writer.finishWriting()
         guard writer.status == .completed else {
             throw CaptureError.writerFailed(writer.error?.localizedDescription ?? "write failed")
         }
     }
 
-    private static func pump(from output: AVAssetReaderOutput, into input: AVAssetWriterInput, label: String) async {
+    /// Copy samples from `output` to `input`. With `stretchLastTo`, the last
+    /// sample is held back and its duration extended to reach that time.
+    private static func pump(from output: AVAssetReaderOutput, into input: AVAssetWriterInput,
+                             stretchLastTo end: CMTime?, label: String) async {
         let queue = DispatchQueue(label: label)
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             var done = false
+            var held: CMSampleBuffer?
+            func finish() {
+                done = true
+                input.markAsFinished()
+                cont.resume()
+            }
             input.requestMediaDataWhenReady(on: queue) {
                 guard !done else { return }
                 while input.isReadyForMoreMediaData {
-                    guard let sb = output.copyNextSampleBuffer(), input.append(sb) else {
-                        done = true
-                        input.markAsFinished()
-                        cont.resume()
-                        return
+                    guard let next = output.copyNextSampleBuffer() else {
+                        // Out of samples: write the held one, stretched.
+                        if let last = held {
+                            held = nil
+                            _ = input.append(stretched(last, to: end) ?? last)
+                            continue
+                        }
+                        return finish()
                     }
+                    // Pass through as-is when not stretching, and for empty
+                    // marker buffers, which carry no picture to hold.
+                    guard end != nil, CMSampleBufferGetNumSamples(next) > 0 else {
+                        if !input.append(next) { return finish() }
+                        continue
+                    }
+                    if let prev = held, !input.append(prev) { return finish() }
+                    held = next
                 }
             }
         }
+    }
+
+    /// A copy of `sb` whose duration runs to `end`, if that makes it longer.
+    private static func stretched(_ sb: CMSampleBuffer, to end: CMTime?) -> CMSampleBuffer? {
+        guard let end else { return nil }
+        let pts = sb.presentationTimeStamp
+        let wanted = end - pts
+        guard wanted.isValid, wanted > sb.duration || !sb.duration.isValid else { return nil }
+        var timing = CMSampleTimingInfo(duration: wanted, presentationTimeStamp: pts,
+                                        decodeTimeStamp: sb.decodeTimeStamp)
+        var out: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sb, sampleTimingEntryCount: 1,
+                                              sampleTimingArray: &timing, sampleBufferOut: &out)
+        return out
     }
 }

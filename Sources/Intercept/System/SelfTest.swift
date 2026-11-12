@@ -85,7 +85,7 @@ enum SelfTest {
             session.includeMirrors = kind == "screenall-mirrors"
             session.duplicateMainForTest = kind == "screenall-double"
             var stopError = "none"
-            session.onUnexpectedStop = { err in stopError = err?.localizedDescription ?? "nil" }
+            session.onUserStopped = { stopError = "stopped from the macOS menu" }
             do {
                 try await session.start()
                 var peakIn: Float = 0, peakOut: Float = 0
@@ -102,7 +102,7 @@ enum SelfTest {
                 let asset = AVURLAsset(url: out)
                 let dur = try await asset.load(.duration).seconds
                 var lines = ["selftest OK: \(out.path)", String(format: "duration %.2f s, peak in %.3f, peak out %.3f, displays %d, video %.0fx%.0f", dur, peakIn, peakOut, session.displayCount, session.videoSize.width, session.videoSize.height)]
-                lines.append("unexpected stop: \(stopError)")
+                lines.append("unexpected stop: \(stopError), display went away \(session.videoInterruptions) time(s)")
                 for t in try await asset.load(.tracks) {
                     let size = try await t.load(.naturalSize)
                     lines.append("track \(t.mediaType.rawValue) \(Int(size.width))x\(Int(size.height))")
@@ -138,7 +138,7 @@ enum SelfTest {
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
             note()
-            if state.status == .paused { state.toggle() } else { state.stop() }
+            state.stop()
             while state.status != .idle, Date().timeIntervalSince(t0) < seconds + 120 {
                 note()
                 try? await Task.sleep(nanoseconds: 250_000_000)

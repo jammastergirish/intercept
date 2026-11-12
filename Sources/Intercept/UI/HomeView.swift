@@ -129,7 +129,8 @@ struct HomeView: View {
         switch state.status {
         case .starting: return "Starting…"
         case .saving: return "Saving file…"
-        case .paused: return "Paused while the display sleeps"
+        case .recording where state.screenPaused:
+            return state.mode.hasAudio ? "Display off · still recording sound" : "Display off · waiting for it"
         case .recording:
             switch state.mode {
             case .screenOnly: return "Screen only, no sound"

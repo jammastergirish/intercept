@@ -57,14 +57,18 @@ enum Displays {
     }
 }
 
-/// One recording. ScreenCaptureKit delivers the screen, the sound the Mac
-/// plays ("out") and the microphone ("in") on one clock. We write them into a
-/// temporary .mov with one video track and two audio tracks; `Mixdown` later
-/// merges the two audio tracks into one.
+/// One recording, written to a temporary .mov that `Mixdown` later turns
+/// into the final file.
 ///
-/// Recording several displays: each display gets its own stream, and a 30 fps
-/// timer pastes the latest frame from each one onto a single canvas laid out
-/// like System Settings › Displays.
+/// - Sound comes straight from Core Audio (`SystemAudioTap` for what the Mac
+///   plays, `MicrophoneSource` for the mic), so it never stops when the screen
+///   locks or the display turns off. Each goes to its own track.
+/// - The screen comes from ScreenCaptureKit. When macOS takes the display away
+///   (it turned off), the video holds its last picture and Intercept keeps
+///   trying to reconnect; once the display is back, video carries on in the
+///   same file.
+/// - Several displays: each gets its own stream, and a 30 fps timer pastes the
+///   latest frame from each onto one canvas laid out like System Settings.
 final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     let mode: RecordingMode
     let displayChoice: DisplayChoice
@@ -75,40 +79,51 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     /// multi-display compositing on a machine with one display.
     var duplicateMainForTest = false
 
-    /// Called (on the capture queue) if the system stops a stream, e.g. the
-    /// user clicked "Stop" in the macOS screen-recording menu.
-    var onUnexpectedStop: ((Error?) -> Void)?
+    /// Called if you stop sharing from macOS's own screen-recording menu.
+    var onUserStopped: (() -> Void)?
 
     /// How many displays the recording covers (known after `start`).
     private(set) var displayCount = 0
     private(set) var videoSize: CGSize = .zero
+    /// How many times the display went away during this recording (for tests).
+    private(set) var videoInterruptions = 0
 
-    private var streams: [SCStream] = []
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
-    private var systemInput: AVAssetWriterInput?
-    private var micInput: AVAssetWriterInput?
+    private var systemTrack: AudioTrackWriter?
+    private var micTrack: AudioTrackWriter?
+    private var systemSource: SystemAudioTap?
+    private var micSource: MicrophoneSource?
 
     private let queue = DispatchQueue(label: "intercept.capture", qos: .userInitiated)
     private var sessionStart: CMTime = .invalid
-    private var lastTime: CMTime = .invalid
+    private var lastVideoTime: CMTime = .invalid
     private var stopping = false
 
-    // Multi-display compositing (used only when recording more than one display).
+    // Screen capture. Everything below is touched on `queue` only.
+    private var targetIDs: [CGDirectDisplayID] = []      // index = stream index
+    private var streamSizes: [Int: (Int, Int)] = [:]
+    private var streams: [SCStream] = []
+    private var streamIndex: [ObjectIdentifier: Int] = [:]
+    private var videoLost = false
+    private var reconnecting = false
+    private var reconnectTimer: DispatchSourceTimer?
+
+    // Multi-display compositing.
     private var compositing = false
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
-    // Keyed by stream index (0 = main display).
-    private var streamIndex: [ObjectIdentifier: Int] = [:]
     private var placement: [Int: CGRect] = [:]   // canvas pixels, origin bottom-left
     private var latestFrame: [Int: CVPixelBuffer] = [:]
     private var frameDirty = false
+    private var drewComposite = false
     private var compositeTimer: DispatchSourceTimer?
     private lazy var ciContext = CIContext(options: [.cacheIntermediates: false])
 
-    // Live peak levels (0...1), read by the UI.
-    private let levelLock = NSLock()
+    // Shared with the UI thread.
+    private let lock = NSLock()
     private var _inLevel: Float = 0
     private var _outLevel: Float = 0
+    private var _videoPaused = false
 
     init(mode: RecordingMode, displays: DisplayChoice = .main, rawURL: URL) {
         self.mode = mode
@@ -118,65 +133,24 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// Returns the latest input (mic) and output (system) peaks and resets them.
     func takeLevels() -> (input: Float, output: Float) {
-        levelLock.lock(); defer { levelLock.unlock() }
-        let r = (_inLevel, _outLevel)
-        _inLevel = 0; _outLevel = 0
-        return r
+        lock.withLock {
+            let r = (_inLevel, _outLevel)
+            _inLevel = 0; _outLevel = 0
+            return r
+        }
     }
+
+    /// True while the display is off and only sound is being recorded.
+    var isVideoPaused: Bool { lock.withLock { _videoPaused } }
 
     // MARK: Start
 
     func start() async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let mainDisplay = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
-                ?? content.displays.first else { throw CaptureError.noDisplay }
-
-        // Pick the displays to record.
-        var targets = [mainDisplay]
-        if mode.hasVideo && displayChoice == .all {
-            let others = content.displays.filter { d in
-                d.displayID != mainDisplay.displayID &&
-                (includeMirrors || CGDisplayMirrorsDisplay(d.displayID) == kCGNullDirectDisplay)
-            }
-            targets += others
-            if duplicateMainForTest { targets.append(mainDisplay) }
-        }
-        compositing = mode.hasVideo && targets.count > 1
-        displayCount = mode.hasVideo ? targets.count : 0
-
-        // Work out the video size and, when compositing, where each display goes.
-        var streamSizes: [Int: (Int, Int)] = [:]
+        var content: SCShareableContent?
         if mode.hasVideo {
-            if compositing {
-                var bounds = targets.map { CGDisplayBounds($0.displayID) }
-                if duplicateMainForTest, let first = bounds.first {
-                    // Pretend the copy sits to the right of the original.
-                    bounds[bounds.count - 1] = first.offsetBy(dx: first.width, dy: 0)
-                }
-                let union = bounds.reduce(CGRect.null) { $0.union($1) }
-                let maxScale = targets.map { CGFloat(SCContentFilter(display: $0, excludingWindows: []).pointPixelScale) }.max() ?? 1
-                // Keep the canvas inside what the hardware HEVC encoder handles.
-                let scale = min(maxScale, 7680 / union.width, 4320 / union.height)
-                let canvasW = Int(union.width * scale) & ~1
-                let canvasH = Int(union.height * scale) & ~1
-                videoSize = CGSize(width: canvasW, height: canvasH)
-                for (i, b) in bounds.enumerated() {
-                    let w = Int(b.width * scale) & ~1
-                    let h = Int(b.height * scale) & ~1
-                    let x = (b.minX - union.minX) * scale
-                    let yFromTop = (b.minY - union.minY) * scale
-                    placement[i] = CGRect(x: x, y: CGFloat(canvasH) - yFromTop - CGFloat(h),
-                                                    width: CGFloat(w), height: CGFloat(h))
-                    streamSizes[i] = (w, h)
-                }
-            } else {
-                let filter = SCContentFilter(display: mainDisplay, excludingWindows: [])
-                let scale = CGFloat(filter.pointPixelScale)
-                let w = Int(filter.contentRect.width * scale) & ~1     // encoders want even sizes
-                let h = Int(filter.contentRect.height * scale) & ~1
-                videoSize = CGSize(width: w, height: h)
-                streamSizes[0] = (w, h)
-            }
+            let c = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            content = c
+            try planVideo(c)
         }
 
         // Writer for the temporary multi-track file.
@@ -190,7 +164,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         if mode.hasVideo {
             let w = Int(videoSize.width), h = Int(videoSize.height)
             let bitrate = max(8_000_000, w * h * 4)   // ~4 bits/pixel/s, generous for text
-            let settings: [String: Any] = [
+            let vi = AVAssetWriterInput(mediaType: .video, outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.hevc,
                 AVVideoWidthKey: w,
                 AVVideoHeightKey: h,
@@ -198,9 +172,11 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
                     AVVideoAverageBitRateKey: bitrate,
                     AVVideoExpectedSourceFrameRateKey: 30,
                     AVVideoMaxKeyFrameIntervalKey: 60,
+                    // Frames in display order (no B-frames): suits live
+                    // encoding, and lets the last picture be held to the end.
+                    AVVideoAllowFrameReorderingKey: false,
                 ],
-            ]
-            let vi = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+            ])
             vi.expectsMediaDataInRealTime = true
             writer.add(vi)
             videoInput = vi
@@ -214,18 +190,15 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             }
         }
 
-        // Lossless PCM for the intermediate audio tracks.
-        let pcm = Mixdown.pcmSettings
         if mode.hasAudio {
-            let si = AVAssetWriterInput(mediaType: .audio, outputSettings: pcm)
-            si.expectsMediaDataInRealTime = true
-            writer.add(si)
-            systemInput = si
-
-            let mi = AVAssetWriterInput(mediaType: .audio, outputSettings: pcm)
-            mi.expectsMediaDataInRealTime = true
-            writer.add(mi)
-            micInput = mi
+            func track() -> AudioTrackWriter {
+                let input = AVAssetWriterInput(mediaType: .audio, outputSettings: Mixdown.pcmSettings)
+                input.expectsMediaDataInRealTime = true
+                writer.add(input)
+                return AudioTrackWriter(input: input)
+            }
+            systemTrack = track()
+            micTrack = track()
         }
 
         guard writer.startWriting() else {
@@ -233,90 +206,209 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         self.writer = writer
 
-        // One stream per display. Only the first (main display) carries audio,
-        // and only in modes that record sound.
-        for (i, display) in targets.enumerated() {
-            let config = SCStreamConfiguration()
-            if i == 0 && mode.hasAudio {
-                config.capturesAudio = true
-                config.captureMicrophone = true
-                config.excludesCurrentProcessAudio = true
-                config.sampleRate = 48_000
-                config.channelCount = 2
-            }
-            if mode.hasVideo, let (w, h) = streamSizes[i] {
-                config.width = w
-                config.height = h
-                config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
-                config.showsCursor = true
-                config.pixelFormat = kCVPixelFormatType_32BGRA
-                config.queueDepth = 6
-            } else {
-                // Audio only: ScreenCaptureKit still needs a video size, so ask
-                // for a tiny, slow one and throw the frames away.
-                config.width = 2
-                config.height = 2
-                config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-                config.showsCursor = false
-            }
-
-            let filter = SCContentFilter(display: display, excludingWindows: [])
-            let stream = SCStream(filter: filter, configuration: config, delegate: self)
-            try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-            if i == 0 && mode.hasAudio {
-                try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
-                try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
-            }
-            streamIndex[ObjectIdentifier(stream)] = i
-            streams.append(stream)
-        }
-
         do {
-            for stream in streams { try await stream.startCapture() }
+            // Start the sound first: the first time, macOS may hold this up
+            // while it asks for permission. The file's clock starts only once
+            // that's done (host clock, the same one video frames use).
+            if mode.hasAudio { try startAudio() }
+            queue.sync {
+                sessionStart = CMClockGetTime(CMClockGetHostTimeClock())
+                writer.startSession(atSourceTime: sessionStart)
+            }
+            if let content { try await startVideoStreams(content) }
         } catch {
-            for stream in streams { try? await stream.stopCapture() }
+            stopAudio()
             writer.cancelWriting()
             throw error
         }
-
         if compositing { startCompositeTimer() }
+    }
+
+    /// Decide which displays to record, the video size, and (for several
+    /// displays) where each one sits on the canvas.
+    private func planVideo(_ content: SCShareableContent) throws {
+        guard let mainDisplay = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
+                ?? content.displays.first else { throw CaptureError.noDisplay }
+
+        var targets = [mainDisplay]
+        if displayChoice == .all {
+            targets += content.displays.filter { d in
+                d.displayID != mainDisplay.displayID &&
+                (includeMirrors || CGDisplayMirrorsDisplay(d.displayID) == kCGNullDirectDisplay)
+            }
+            if duplicateMainForTest { targets.append(mainDisplay) }
+        }
+        targetIDs = targets.map(\.displayID)
+        compositing = targets.count > 1
+        displayCount = targets.count
+
+        if compositing {
+            var bounds = targets.map { CGDisplayBounds($0.displayID) }
+            if duplicateMainForTest, let first = bounds.first {
+                // Pretend the copy sits to the right of the original.
+                bounds[bounds.count - 1] = first.offsetBy(dx: first.width, dy: 0)
+            }
+            let union = bounds.reduce(CGRect.null) { $0.union($1) }
+            let maxScale = targets.map { CGFloat(SCContentFilter(display: $0, excludingWindows: []).pointPixelScale) }.max() ?? 1
+            // Keep the canvas inside what the hardware HEVC encoder handles.
+            let scale = min(maxScale, 7680 / union.width, 4320 / union.height)
+            let canvasW = Int(union.width * scale) & ~1
+            let canvasH = Int(union.height * scale) & ~1
+            videoSize = CGSize(width: canvasW, height: canvasH)
+            for (i, b) in bounds.enumerated() {
+                let w = Int(b.width * scale) & ~1
+                let h = Int(b.height * scale) & ~1
+                let x = (b.minX - union.minX) * scale
+                let yFromTop = (b.minY - union.minY) * scale
+                placement[i] = CGRect(x: x, y: CGFloat(canvasH) - yFromTop - CGFloat(h),
+                                      width: CGFloat(w), height: CGFloat(h))
+                streamSizes[i] = (w, h)
+            }
+        } else {
+            let filter = SCContentFilter(display: mainDisplay, excludingWindows: [])
+            let scale = CGFloat(filter.pointPixelScale)
+            let w = Int(filter.contentRect.width * scale) & ~1     // encoders want even sizes
+            let h = Int(filter.contentRect.height * scale) & ~1
+            videoSize = CGSize(width: w, height: h)
+            streamSizes[0] = (w, h)
+        }
+    }
+
+    // MARK: Sound
+
+    private func startAudio() throws {
+        let system = SystemAudioTap()
+        system.onChunk = { [weak self] chunk in self?.queue.async { self?.write(chunk, isMic: false) } }
+        let mic = MicrophoneSource()
+        mic.onChunk = { [weak self] chunk in self?.queue.async { self?.write(chunk, isMic: true) } }
+        try system.start()
+        try mic.start()
+        systemSource = system
+        micSource = mic
+    }
+
+    private func stopAudio() {
+        systemSource?.stop(); systemSource = nil
+        micSource?.stop(); micSource = nil
+    }
+
+    private func write(_ chunk: CanonicalAudio.Chunk, isMic: Bool) {
+        let peak = chunk.peak
+        lock.withLock {
+            if isMic { _inLevel = max(_inLevel, peak) } else { _outLevel = max(_outLevel, peak) }
+        }
+        guard !stopping, sessionStart.isValid, writer?.status == .writing else { return }
+        (isMic ? micTrack : systemTrack)?.append(chunk, sessionStart: sessionStart)
+    }
+
+    // MARK: Screen
+
+    /// Start one stream per display we're recording. Used at the start and to
+    /// reconnect after the display comes back.
+    private func startVideoStreams(_ content: SCShareableContent) async throws {
+        var newStreams: [SCStream] = []
+        var newIndex: [ObjectIdentifier: Int] = [:]
+        for (i, id) in targetIDs.enumerated() {
+            guard let display = content.displays.first(where: { $0.displayID == id }),
+                  let (w, h) = streamSizes[i] else { continue }
+            let config = SCStreamConfiguration()
+            config.width = w
+            config.height = h
+            config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+            config.showsCursor = true
+            config.pixelFormat = kCVPixelFormatType_32BGRA
+            config.queueDepth = 6
+            let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []),
+                                  configuration: config, delegate: self)
+            try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+            newIndex[ObjectIdentifier(stream)] = i
+            newStreams.append(stream)
+        }
+        guard !newStreams.isEmpty else { throw CaptureError.noDisplay }
+        do {
+            for stream in newStreams { try await stream.startCapture() }
+        } catch {
+            for stream in newStreams { try? await stream.stopCapture() }
+            throw error
+        }
+        queue.sync {
+            streams = newStreams
+            streamIndex = newIndex
+        }
+    }
+
+    /// The display went away: keep recording sound and try to reconnect the
+    /// screen every few seconds. Runs on `queue`.
+    private func videoWentAway() {
+        guard !stopping, !videoLost else { return }
+        videoLost = true
+        videoInterruptions += 1
+        lock.withLock { _videoPaused = true }
+        streams = []
+        streamIndex = [:]
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 3, repeating: 3)
+        timer.setEventHandler { [weak self] in self?.tryReconnect() }
+        reconnectTimer = timer
+        timer.resume()
+    }
+
+    private func tryReconnect() {
+        guard !stopping, videoLost, !reconnecting else { return }
+        reconnecting = true
+        Task {
+            var ok = false
+            if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+                ok = (try? await startVideoStreams(content)) != nil
+            }
+            queue.async {
+                self.reconnecting = false
+                guard ok else { return }
+                self.videoLost = false
+                self.reconnectTimer?.cancel()
+                self.reconnectTimer = nil
+                self.lock.withLock { self._videoPaused = false }
+            }
+        }
     }
 
     // MARK: Stop
 
     /// Stops capture and finishes the temporary file. Returns its URL.
     func stop() async throws -> URL {
-        for stream in streams { try? await stream.stopCapture() }
-        streams = []
+        let current: [SCStream] = queue.sync {
+            stopping = true
+            reconnectTimer?.cancel(); reconnectTimer = nil
+            compositeTimer?.cancel(); compositeTimer = nil
+            return streams
+        }
+        for stream in current { try? await stream.stopCapture() }
+        stopAudio()
         return try await finishWriting()
     }
 
     private func finishWriting() async throws -> URL {
-        // Hop onto the capture queue so no sample is appended mid-finish.
+        // Hop onto the capture queue so nothing is appended mid-finish.
         let writer: AVAssetWriter? = await withCheckedContinuation { cont in
             queue.async {
-                self.stopping = true
-                self.compositeTimer?.cancel()
-                self.compositeTimer = nil
+                self.streams = []
                 self.latestFrame = [:]
                 cont.resume(returning: self.writer)
             }
         }
-        guard let writer else { throw CaptureError.writerFailed("recording never started") }
-        guard writer.status == .writing else {
-            throw CaptureError.writerFailed(writer.error?.localizedDescription ?? "no audio or video arrived")
-        }
-        if !sessionStart.isValid {
-            writer.cancelWriting()
-            throw CaptureError.writerFailed("no audio or video arrived")
+        guard let writer, writer.status == .writing else {
+            throw CaptureError.writerFailed(writer?.error?.localizedDescription ?? "recording never started")
         }
         videoInput?.markAsFinished()
-        systemInput?.markAsFinished()
-        micInput?.markAsFinished()
-        if lastTime.isValid { writer.endSession(atSourceTime: lastTime) }
+        systemTrack?.input.markAsFinished()
+        micTrack?.input.markAsFinished()
+        // Run the file right up to the moment you pressed stop, so a still
+        // screen's last picture lasts until the end.
+        writer.endSession(atSourceTime: CMClockGetTime(CMClockGetHostTimeClock()))
         await writer.finishWriting()
         if writer.status != .completed {
-            throw CaptureError.writerFailed(writer.error?.localizedDescription ?? "unknown error")
+            throw CaptureError.writerFailed(writer.error?.localizedDescription ?? "nothing was recorded")
         }
         return rawURL
     }
@@ -324,51 +416,19 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     // MARK: SCStreamOutput
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard !stopping, sb.isValid, let writer, writer.status == .writing else { return }
-        let pts = sb.presentationTimeStamp
-
-        switch type {
-        case .screen:
-            guard mode.hasVideo, let vi = videoInput, Self.isCompleteFrame(sb) else { return }
-            if compositing {
-                // Keep the newest frame per display; the timer draws the canvas.
-                if let id = streamIndex[ObjectIdentifier(stream)], let pb = sb.imageBuffer {
-                    latestFrame[id] = pb
-                    frameDirty = true
-                }
-                return
+        guard type == .screen, !stopping, sb.isValid, let writer, writer.status == .writing,
+              let vi = videoInput, Self.isCompleteFrame(sb) else { return }
+        if compositing {
+            // Keep the newest frame per display; the timer draws the canvas.
+            if let i = streamIndex[ObjectIdentifier(stream)], let pb = sb.imageBuffer {
+                latestFrame[i] = pb
+                frameDirty = true
             }
-            startSessionIfNeeded(at: pts, writer: writer)
-            guard pts >= sessionStart else { return }
-            if vi.isReadyForMoreMediaData { vi.append(sb) }
-            noteTime(pts)
-
-        case .audio, .microphone:
-            let peak = Self.peak(of: sb)
-            levelLock.lock()
-            if type == .audio { _outLevel = max(_outLevel, peak) } else { _inLevel = max(_inLevel, peak) }
-            levelLock.unlock()
-
-            // In screen mode the file starts at the first video frame.
-            if mode == .audio { startSessionIfNeeded(at: pts, writer: writer) }
-            guard sessionStart.isValid, pts >= sessionStart else { return }
-            let input = (type == .audio) ? systemInput : micInput
-            if let input, input.isReadyForMoreMediaData { input.append(sb) }
-            noteTime(CMTimeAdd(pts, sb.duration))
-
-        @unknown default:
             return
         }
-    }
-
-    private func startSessionIfNeeded(at pts: CMTime, writer: AVAssetWriter) {
-        guard !sessionStart.isValid else { return }
-        writer.startSession(atSourceTime: pts)
-        sessionStart = pts
-    }
-
-    private func noteTime(_ t: CMTime) {
-        if !lastTime.isValid || t > lastTime { lastTime = t }
+        let pts = sb.presentationTimeStamp
+        guard pts >= sessionStart, !lastVideoTime.isValid || pts > lastVideoTime else { return }
+        if vi.isReadyForMoreMediaData, vi.append(sb) { lastVideoTime = pts }
     }
 
     // MARK: Compositing several displays
@@ -386,10 +446,10 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
               let adaptor, let vi = videoInput, let pool = adaptor.pixelBufferPool else { return }
         // Wait until every display has sent a picture, so the video doesn't
         // open with a black gap where a display should be.
-        guard latestFrame.count == placement.count || sessionStart.isValid else { return }
+        guard drewComposite || latestFrame.count == placement.count else { return }
 
-        // ScreenCaptureKit stamps samples with the host clock, so "now" on that
-        // clock lines the composite frames up with the audio.
+        // ScreenCaptureKit stamps frames with the host clock, so "now" on that
+        // clock lines the composite frames up with the sound.
         let now = CMClockGetTime(CMClockGetHostTimeClock())
         var out: CVPixelBuffer?
         CVPixelBufferPoolCreatePixelBuffer(nil, pool, &out)
@@ -397,8 +457,8 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let canvas = CGRect(origin: .zero, size: videoSize)
         var image = CIImage(color: .black).cropped(to: canvas)
-        for (id, pb) in latestFrame {
-            guard let r = placement[id] else { continue }
+        for (i, pb) in latestFrame {
+            guard let r = placement[i] else { continue }
             var frame = CIImage(cvPixelBuffer: pb)
             let sx = r.width / frame.extent.width, sy = r.height / frame.extent.height
             if abs(sx - 1) > 0.001 || abs(sy - 1) > 0.001 {
@@ -409,17 +469,22 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         ciContext.render(image, to: out, bounds: canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
 
-        startSessionIfNeeded(at: now, writer: writer)
         if vi.isReadyForMoreMediaData, adaptor.append(out, withPresentationTime: now) {
             frameDirty = false
-            noteTime(now)
+            drewComposite = true
+            lastVideoTime = now
         }
     }
 
     // MARK: SCStreamDelegate
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        onUnexpectedStop?(error)
+        let ns = error as NSError
+        if ns.domain == SCStreamErrorDomain && ns.code == SCStreamError.Code.userStopped.rawValue {
+            onUserStopped?()
+        } else {
+            queue.async { self.videoWentAway() }
+        }
     }
 
     // MARK: Helpers
@@ -431,43 +496,5 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
               let raw = attachments.first?[.status] as? Int,
               let status = SCFrameStatus(rawValue: raw) else { return false }
         return status == .complete
-    }
-
-    /// Peak absolute sample value in an audio buffer (float or 16-bit PCM).
-    private static func peak(of sb: CMSampleBuffer) -> Float {
-        guard let fmt = sb.formatDescription,
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmt)?.pointee else { return 0 }
-
-        var sizeNeeded = 0
-        CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sb, bufferListSizeNeededOut: &sizeNeeded, bufferListOut: nil, bufferListSize: 0,
-            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil, flags: 0, blockBufferOut: nil)
-        guard sizeNeeded > 0 else { return 0 }
-
-        let raw = UnsafeMutableRawPointer.allocate(byteCount: sizeNeeded, alignment: MemoryLayout<AudioBufferList>.alignment)
-        defer { raw.deallocate() }
-        let list = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
-        var block: CMBlockBuffer?
-        guard CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sb, bufferListSizeNeededOut: nil, bufferListOut: list, bufferListSize: sizeNeeded,
-            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
-            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
-            blockBufferOut: &block) == noErr else { return 0 }
-
-        let isFloat = asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0
-        var peak: Float = 0
-        for buf in UnsafeMutableAudioBufferListPointer(list) {
-            guard let data = buf.mData else { continue }
-            if isFloat && asbd.mBitsPerChannel == 32 {
-                let n = Int(buf.mDataByteSize) / 4
-                let p = data.bindMemory(to: Float.self, capacity: n)
-                for i in stride(from: 0, to: n, by: 4) { peak = max(peak, abs(p[i])) }
-            } else if asbd.mBitsPerChannel == 16 {
-                let n = Int(buf.mDataByteSize) / 2
-                let p = data.bindMemory(to: Int16.self, capacity: n)
-                for i in stride(from: 0, to: n, by: 4) { peak = max(peak, abs(Float(p[i]) / 32768)) }
-            }
-        }
-        return min(peak, 1)
     }
 }

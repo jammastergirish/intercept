@@ -24,13 +24,16 @@ A regular app (Dock and Cmd-Tab) with a menu-bar icon, styled to match One Tap T
 
 ## Permissions
 
-Intercept needs two macOS permissions. The main window shows both, with **Grant**
-buttons:
+Intercept uses three macOS permissions:
 
-1. **Microphone**: to record what goes in.
-2. **Screen & System Audio Recording**: to record the screen and the sound the Mac
-   plays. macOS only applies this one after the app restarts, so press **Relaunch**
-   after you allow it.
+1. **Microphone**: to record what goes in. Needed for Audio and Screen + Audio.
+2. **Screen & System Audio Recording**: to record the screen. Needed for Screen and
+   Screen + Audio. macOS only applies this one after the app restarts, so press
+   **Relaunch** after you allow it.
+3. **System audio**: to record the sound the Mac plays. macOS asks the first time
+   you record with sound.
+
+The main window shows the first two, with **Grant** buttons.
 
 ## Build from source
 
@@ -63,9 +66,11 @@ notarize it, and staples the ticket so it opens without Gatekeeper warnings.
 
 ## How it works
 
-ScreenCaptureKit delivers the screen, the system sound and the microphone on one
-clock. Intercept writes them into a temporary `.mov` with one video track and two
-lossless audio tracks. When you stop, it copies the video into the final file
+Sound comes straight from Core Audio: a process tap records everything the Mac
+plays, and the audio engine records the microphone. The screen comes from
+ScreenCaptureKit. All three are stamped with the same host clock, and Intercept
+writes them into a temporary `.mov` with one video track and two lossless audio
+tracks. When you stop, it copies the video into the final file
 without re-encoding and mixes the two audio tracks into one AAC track. If the
 mixing step fails, Intercept keeps the un-mixed `.mov` so nothing is lost.
 
@@ -76,12 +81,15 @@ temporary file into `<name> (recovered).mp4` (or `.m4a`) and says so in the
 window. It ignores temporary files written to in the last minute, in case another
 copy of the app is still recording them.
 
-**Display sleep and locking.** A locked screen with the display still on keeps
-recording (the video shows the lock screen). When the display goes to sleep,
-macOS stops all capture, sound included. Intercept then saves the recording so
-far, shows **Paused**, and starts a new file by itself as soon as the display
-wakes and the screen is unlocked. If you stop sharing from macOS's own
-screen-recording menu, Intercept stays stopped.
+**Locking and the display turning off.** Recording never stops on its own.
+While recording, Intercept keeps the Mac from going to sleep when idle (the
+display may still turn off). Sound keeps recording through a locked screen and a
+dark display, because it doesn't depend on the screen. When macOS turns the
+display off, the video holds its last picture and Intercept reconnects the
+screen into the same file as soon as the display is back. Closing the lid or
+choosing Sleep still sleeps the whole Mac; recording carries on in the same file
+afterwards, with silence for the gap. Stopping from macOS's own screen-recording
+menu ends the recording.
 
 With **All** displays, each display gets its own capture stream. A 30 fps timer
 pastes the newest frame from each one onto a single canvas, capped at 7680×4320
