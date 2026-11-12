@@ -27,7 +27,6 @@ struct RecordingsTable: View {
             column("Name").frame(maxWidth: .infinity, alignment: .leading)
             column("Length").frame(width: 64, alignment: .trailing)
             column("Size").frame(width: 58, alignment: .trailing)
-            Color.clear.frame(width: buttonsWidth, height: 1)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -38,9 +37,6 @@ struct RecordingsTable: View {
         MonoLabel(text: title, size: 10, tracking: 0.8, color: Theme.monoFaint)
     }
 }
-
-/// Room for the four hover buttons.
-private let buttonsWidth: CGFloat = 86
 
 private struct RecordingRow: View {
     @EnvironmentObject var state: AppState
@@ -61,25 +57,31 @@ private struct RecordingRow: View {
                 .frame(width: 16)
             nameCell
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(item.duration.map(Format.length) ?? "—")
-                .font(.mono(11.5))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 64, alignment: .trailing)
-            Text(ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file))
-                .font(.mono(11.5))
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-                .frame(width: 58, alignment: .trailing)
-            HStack(spacing: 2) {
-                iconButton("magnifyingglass", help: "Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([item.url])
+            // Length and size; while you hover (or it's transcribing), the
+            // row's buttons take their place, so names keep the full width.
+            ZStack(alignment: .trailing) {
+                HStack(spacing: 8) {
+                    Text(item.duration.map(Format.length) ?? "—")
+                        .font(.mono(11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 64, alignment: .trailing)
+                    Text(ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file))
+                        .font(.mono(11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .frame(width: 58, alignment: .trailing)
                 }
-                iconButton("play.fill", help: "Open") { NSWorkspace.shared.open(item.url) }
-                transcriptButton
-                iconButton("trash", help: "Move to Trash") { state.moveToTrash(item) }
+                .opacity(hover || transcribing ? 0 : 1)
+                HStack(spacing: 2) {
+                    iconButton("magnifyingglass", help: "Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([item.url])
+                    }
+                    iconButton("play.fill", help: "Open") { NSWorkspace.shared.open(item.url) }
+                    transcriptButton
+                    iconButton("trash", help: "Move to Trash") { state.moveToTrash(item) }
+                }
+                .opacity(hover || transcribing ? 1 : 0)
             }
-            .frame(width: buttonsWidth)
-            .opacity(hover || transcribing ? 1 : 0)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)

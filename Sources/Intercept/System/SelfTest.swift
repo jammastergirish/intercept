@@ -70,31 +70,33 @@ enum SelfTest {
                               atomically: true, encoding: .utf8)
             exit(0)
         }
-        // `--snapshot-transcript <png>`: render sample transcript lines (dark) and quit.
-        if let i = args.firstIndex(of: "--snapshot-transcript"), args.count > i + 1 {
-            var t = Transcript(lines: [
-                .init(id: 0, start: 0, end: 1, speaker: "speaker_0", text: "Good."),
-                .init(id: 1, start: 1, end: 3, speaker: "speaker_1", text: "Okay. Let's talk about your proposal."),
-                .init(id: 2, start: 14, end: 27, speaker: "speaker_0",
-                      text: "I think that you are a very good speaker. The pathos side doesn't come across as well."),
-                .init(id: 3, start: 28, end: 29, speaker: "speaker_2", text: "Yeah."),
-            ], model: "scribe_v2")
-            t.speakerNames = ["speaker_0": "Girish"]
-            NSApp.appearance = NSAppearance(named: .darkAqua)
-            let view = VStack(spacing: 6) {
-                ForEach(t.lines) { line in
-                    TranscriptLineRow(line: line, speakerName: line.speaker.map(t.name(of:)),
-                                      colorIndex: line.speaker.map(t.colorIndex(of:)), onRename: { _ in })
+        // `--marketing-shots <recordings folder> <out prefix>`: render the main
+        // window (light and dark) with sample recordings and generic device
+        // names, and a sample transcript, for the website. Then quit.
+        if let i = args.firstIndex(of: "--marketing-shots"), args.count > i + 2 {
+            let folder = URL(fileURLWithPath: args[i + 1], isDirectory: true)
+            let prefix = args[i + 2]
+            let savedFolder = UserDefaults.standard.object(forKey: "folder")
+            let state = AppState()
+            let saved = SettingsStore.load()
+            state.prepareForScreenshot(folder: folder)
+            state.settings = CaptureSettings(screen: true, audio: true, camera: true, transcribe: true)
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)   // let the list load
+                for dark in [false, true] {
+                    NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    let scheme: ColorScheme = dark ? .dark : .light
+                    let suffix = dark ? "dark" : "light"
+                    render(HomeView().environmentObject(state).environment(\.colorScheme, scheme),
+                           to: "\(prefix)window-\(suffix).png")
+                    render(sampleTranscript(scheme), to: "\(prefix)transcript-\(suffix).png")
                 }
+                SettingsStore.save(saved)
+                if let savedFolder { UserDefaults.standard.set(savedFolder, forKey: "folder") }
+                else { UserDefaults.standard.removeObject(forKey: "folder") }
+                exit(0)
             }
-            .padding(20).frame(width: 700).background(Theme.windowBG)
-            .environment(\.colorScheme, .dark)
-            let r = ImageRenderer(content: view); r.scale = 2
-            if let img = r.nsImage, let tiff = img.tiffRepresentation,
-               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
-                try? png.write(to: URL(fileURLWithPath: args[i + 1]))
-            }
-            exit(0)
+            return
         }
         // `--recover <folder>`: finish leftover capture files in a folder and quit.
         if let i = args.firstIndex(of: "--recover"), args.count > i + 1 {
@@ -246,5 +248,51 @@ enum SelfTest {
     private static func report(_ text: String, _ out: URL) {
         print(text)
         try? text.write(to: out.appendingPathExtension("txt"), atomically: true, encoding: .utf8)
+    }
+
+    @MainActor
+    private static func render(_ view: some View, to path: String) {
+        let r = ImageRenderer(content: view)
+        r.scale = 2
+        if let img = r.nsImage, let tiff = img.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    /// A short made-up conversation, laid out like the transcript window.
+    @MainActor
+    private static func sampleTranscript(_ scheme: ColorScheme) -> some View {
+        var t = Transcript(lines: [
+            .init(id: 0, start: 0, end: 4, speaker: "speaker_0", text: "Thanks for making time. Shall we start with the launch plan?"),
+            .init(id: 1, start: 4, end: 9, speaker: "speaker_1", text: "Yes. The beta goes out on Thursday, and the release notes are nearly done."),
+            .init(id: 2, start: 9, end: 13, speaker: "speaker_0", text: "Great. Who's writing the announcement?"),
+            .init(id: 3, start: 13, end: 19, speaker: "speaker_2", text: "I can take that. I'll have a draft by Wednesday morning."),
+        ], model: "scribe_v2")
+        t.speakerNames = ["speaker_0": "Alex", "speaker_1": "Sam"]
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Launch planning").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    Text("4 LINES · 3 SPEAKERS · DOUBLE-CLICK A NAME TO CHANGE IT").font(.mono(10.5)).foregroundStyle(Theme.monoFaint)
+                }
+                Spacer()
+                Text("Copy text").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.emberText)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Theme.emberTint, in: RoundedRectangle(cornerRadius: 5))
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14)
+            Divider().overlay(Theme.divider)
+            VStack(spacing: 6) {
+                ForEach(t.lines) { line in
+                    TranscriptLineRow(line: line, speakerName: line.speaker.map(t.name(of:)),
+                                      colorIndex: line.speaker.map(t.colorIndex(of:)))
+                }
+            }
+            .padding(20)
+        }
+        .frame(width: 620)
+        .background(Theme.windowBG)
+        .environment(\.colorScheme, scheme)
     }
 }

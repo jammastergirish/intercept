@@ -2,37 +2,46 @@
 
 **Record everything going in and out of your Mac.** One button. Tick any
 combination of **Screen**, **Audio** and **Camera**, and Intercept records them
-into a single file.
+into a single file. Turn on **Transcribe** and you also get a transcript with
+speakers.
 
 - **Screen** records the display at native resolution, 30 fps (HEVC).
-  - **Displays: Main / All** (shown when more than one display is connected):
-    the display with the menu bar, or every distinct display side by side, laid
-    out like System Settings › Displays. Mirrored displays are skipped.
-- **Audio** records a **microphone** (the system default, one you pick, or none)
-  and/or **Mac sound** (everything the Mac plays).
+  **Displays: Main / All** appears when more than one display is connected:
+  the display with the menu bar, or every distinct display side by side, laid
+  out like System Settings › Displays. Mirrored displays are skipped.
+- **Audio** records a **microphone** (the system default, one you pick, or
+  none) and/or **Mac sound** (everything the Mac plays). They're mixed into one
+  track, so any player hears both sides of a call.
 - **Camera** records the camera you pick (built-in, external, or iPhone via
   Continuity Camera). With Screen it sits in a box in the bottom-right corner;
   on its own it fills the frame.
-
-- **Transcribe** (under Audio) sends the sound to ElevenLabs Scribe v2 when a
-  recording stops, and saves a transcript with speakers next to it as
-  `<name>.transcript.json`. Add your ElevenLabs API key with **Add key…**; it's
-  kept in the Keychain. Older recordings can be transcribed from the
-  Recordings list.
-
-The transcript window shows each turn tinted in the speaker's colour.
-Double-click a speaker's name to give them a real name; double-click a
-recording's name in the list to rename the file (its transcript follows).
+- **Transcribe** (under Audio) sends the recording's sound to ElevenLabs
+  Scribe v2 when you stop, and saves a transcript with speakers next to it as
+  `<name>.transcript.json`. Add your own ElevenLabs API key with **Add key…**;
+  it's kept in the Keychain.
 
 Anything with Screen or Camera saves an `.mp4`; Audio alone saves an `.m4a`
-(AAC, 48 kHz stereo). Files are named `Intercept <date> at <time>`.
+(AAC, 48 kHz stereo). Files are named `Intercept <date> at <time>` and go to
+`~/Documents/Intercept` unless you pick another folder.
 
-The microphone and the system sound are mixed into one audio track, so any player
-hears both sides. Recordings go to `~/Documents/Intercept` by default; pick another
-folder from the main window.
+**Recordings list.** Newest first, with length and size. Double-click a name to
+rename the file (its transcript follows). Hover a row for Show in Finder, Open,
+Transcript and Trash. The transcript button opens the transcript, or makes one
+for a recording that doesn't have one yet.
 
-A regular app (Dock and Cmd-Tab) with a menu-bar icon, styled to match One Tap Transcribe.
-**⇧⌘R** starts and stops recording while the window is focused.
+**Transcript window.** Each turn is tinted in its speaker's colour, with a
+timestamp. Double-click a speaker to give them a real name; it applies to every
+line they spoke. Copy the whole thing as text, or transcribe again.
+
+A regular app (Dock and Cmd-Tab) with a menu-bar icon, styled to match One Tap
+Transcribe. **⇧⌘R** starts and stops recording while the window is focused.
+
+## Privacy
+
+Recordings are ordinary files on your Mac. Intercept has no accounts, analytics
+or servers of its own. The only thing that ever leaves your Mac is a
+recording's sound, sent to ElevenLabs, and only when you've turned on Transcribe
+or asked for a transcript, using your own API key.
 
 ## Requirements
 
@@ -82,10 +91,10 @@ notarize it, and staples the ticket so it opens without Gatekeeper warnings.
 ## How it works
 
 Sound comes straight from Core Audio: a process tap records everything the Mac
-plays, and the audio engine records the microphone. The screen comes from
-ScreenCaptureKit. All three are stamped with the same host clock, and Intercept
-writes them into a temporary `.mov` with one video track and two lossless audio
-tracks. When you stop, it copies the video into the final file
+plays, and the audio engine records the chosen microphone. The screen comes from
+ScreenCaptureKit and the camera from AVCaptureSession. Everything is stamped
+with the same host clock, and Intercept writes it into a temporary `.mov` with
+one video track and a lossless audio track per sound source. When you stop, it copies the video into the final file
 without re-encoding and mixes the two audio tracks into one AAC track. If the
 mixing step fails, Intercept keeps the un-mixed `.mov` so nothing is lost.
 
@@ -106,18 +115,29 @@ choosing Sleep still sleeps the whole Mac; recording carries on in the same file
 afterwards, with silence for the gap. Stopping from macOS's own screen-recording
 menu ends the recording.
 
-With **All** displays, each display gets its own capture stream. A 30 fps timer
-pastes the newest frame from each one onto a single canvas, capped at 7680×4320
-so the hardware encoder can handle it.
+With **All** displays, or with the camera, a 30 fps timer pastes the newest
+frame from each display (and the camera) onto a single canvas, capped at
+7680×4320 so the hardware encoder can handle it.
+
+**Transcription.** When a recording stops, Intercept copies just its sound into
+an `.m4a` (for video recordings) and uploads it to ElevenLabs'
+`v1/speech-to-text` with `scribe_v2`, speaker detection and filler words
+removed, falling back once to `scribe_v1`. Words are grouped into turns when
+the speaker changes or after a pause. Speaker names you type are kept in the
+same JSON file and survive transcribing again.
 
 ### Developer self-test
 
 ```bash
-# kinds: audio | screen | screenall | screenall-double (main display twice, tests compositing)
-open -n /Applications/Intercept.app --args --selftest screen 5 /tmp/test.mp4
+# what to record: words joined with "+": screen, audio, camera, all (displays),
+# nomic, nosound; e.g. "screen+audio+camera" or "camera+audio+nomic"
+open -n /Applications/Intercept.app --args --selftest screen+audio 5 /tmp/test.mp4
 cat /tmp/test.mp4.txt
+# drive the real app: start, wait N seconds, stop (add --with-transcribe for
+# an audio recording that's transcribed afterwards)
+open -n /Applications/Intercept.app --args --apptest 20 /tmp/apptest
+# transcribe a file with the saved key; summary in <file>.scribe.txt
+open -n /Applications/Intercept.app --args --transcribe /tmp/test.m4a
 # finish leftover temporary capture files in a folder
 /Applications/Intercept.app/Contents/MacOS/Intercept --recover ~/Documents/Intercept
-# drive the real app: start, wait N seconds, stop, list files
-open -n /Applications/Intercept.app --args --apptest 120 /tmp/apptest
 ```

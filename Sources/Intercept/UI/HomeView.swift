@@ -170,7 +170,7 @@ struct HomeView: View {
     // Microphone menu: "System default (name)", each mic, "None". The value is
     // "default", "none", or a mic's ID.
     private var micOptions: [OptionMenu<String>.Option] {
-        var o = [OptionMenu.Option("default", "System default" + (CaptureDevices.defaultMicName.map { " (\($0))" } ?? ""))]
+        var o = [OptionMenu.Option("default", "System default" + (state.defaultMicName.map { " (\($0))" } ?? ""))]
         o += state.microphones.map { OptionMenu.Option($0.id, $0.name) }
         if let id = state.settings.micID, !state.microphones.contains(where: { $0.id == id }) {
             o.append(OptionMenu.Option(id, "Not connected"))
@@ -193,7 +193,7 @@ struct HomeView: View {
 
     // Camera menu: "System default (name)" and each camera.
     private var cameraOptions: [OptionMenu<String>.Option] {
-        var o = [OptionMenu.Option("default", "System default" + (CaptureDevices.defaultCameraName.map { " (\($0))" } ?? ""))]
+        var o = [OptionMenu.Option("default", "System default" + (state.defaultCameraName.map { " (\($0))" } ?? ""))]
         o += state.cameras.map { OptionMenu.Option($0.id, $0.name) }
         if let id = state.settings.cameraID, !state.cameras.contains(where: { $0.id == id }) {
             o.append(OptionMenu.Option(id, "Not connected"))

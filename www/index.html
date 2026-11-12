@@ -6,7 +6,7 @@
     <title>Intercept — record everything going in and out of your Mac</title>
     <meta
       name="description"
-      content="One button records your microphone, every sound your Mac plays and, if you like, the whole screen, into a single file. Free for macOS."
+      content="Record your screen, your microphone, every sound your Mac plays and your camera, in any combination, into one file, with an optional transcript that knows who said what. Free for macOS."
     />
     <link
       rel="icon"
@@ -148,6 +148,33 @@
         box-shadow: 0 22px 55px rgba(0, 0, 0, 0.28);
       }
 
+      .transcript {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
+        gap: 28px;
+        align-items: center;
+        margin: 40px 0 14px;
+      }
+      .transcript h2 {
+        font-size: 24px;
+        letter-spacing: -0.01em;
+        margin: 0 0 8px;
+      }
+      .transcript p {
+        color: var(--text-2);
+        font-size: 14.5px;
+        margin: 0 0 10px;
+      }
+      .transcript img {
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        box-shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
+      }
+      @media (max-width: 760px) {
+        .transcript {
+          grid-template-columns: 1fr;
+        }
+      }
       .modes {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -277,9 +304,10 @@
       <div class="hero">
         <h1>Record both sides.</h1>
         <p class="tag">
-          One button records your microphone and every sound your Mac plays —
-          and, if you like, the whole screen — into a single file you can open
-          anywhere.
+          Tick <b>Screen</b>, <b>Audio</b> and <b>Camera</b> in any combination,
+          press one button, and Intercept records them into a single file you
+          can open anywhere. Turn on <b>Transcribe</b> and you also get a
+          transcript that knows who said what.
         </p>
         <a
           class="cta"
@@ -302,7 +330,7 @@
             />
             <img
               src="img/window-light.png"
-              alt="Intercept main window: Screen, Audio and Screen + Audio modes, a record button with input and output level meters, and a list of recordings"
+              alt="Intercept main window: Screen, Audio and Camera tick-boxes; microphone, Mac sound, transcription and camera options; a record button with input and output level meters; and a list of recordings"
             />
           </picture>
         </div>
@@ -310,51 +338,66 @@
 
       <div class="modes">
         <div class="mode">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <rect x="3" y="4" width="18" height="12" rx="2" />
             <path d="M9 20h6M12 16v4" />
           </svg>
           <h3>Screen</h3>
-          <p>The display, with no sound. Doesn't need the microphone.</p>
-          <span class="file mono">.mp4 · HEVC · native resolution</span>
+          <p>
+            Your display at full resolution, or every display side by side.
+          </p>
+          <span class="file mono">HEVC · native resolution · 30 fps</span>
         </div>
         <div class="mode">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
           </svg>
           <h3>Audio</h3>
           <p>
-            Your microphone and everything your Mac plays, mixed into one track.
+            The microphone you pick and everything your Mac plays, mixed into
+            one track.
           </p>
-          <span class="file mono">.m4a · AAC · 48 kHz stereo</span>
+          <span class="file mono">AAC · 48 kHz stereo</span>
         </div>
         <div class="mode">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          >
-            <rect x="3" y="5" width="18" height="14" rx="2" />
-            <path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4" />
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="6" width="13" height="12" rx="2" />
+            <path d="M16 10.5l5-3v9l-5-3z" />
           </svg>
-          <h3>Screen + Audio</h3>
-          <p>The screen and both sides of the sound, in one video.</p>
-          <span class="file mono">.mp4 · 30 fps · one audio track</span>
+          <h3>Camera</h3>
+          <p>
+            Built-in, external or your iPhone. In a corner of the screen
+            recording, or full frame on its own.
+          </p>
+          <span class="file mono">picture-in-picture or full frame</span>
         </div>
+      </div>
+      <p style="font-size: 13px; color: var(--text-3); margin: 0 0 6px">
+        Anything with Screen or Camera saves an <span class="mono">.mp4</span>;
+        Audio alone saves an <span class="mono">.m4a</span>.
+      </p>
+
+      <div class="transcript">
+        <div>
+          <span class="mono">New in 1.4</span>
+          <h2>Who said what</h2>
+          <p>
+            When a recording stops, Intercept sends its sound to ElevenLabs and
+            saves a transcript beside the file, split into turns by speaker.
+          </p>
+          <p>
+            Double-click <b>Speaker 2</b> to give them a real name. It changes
+            every line they spoke. Transcribe older recordings from the list,
+            and copy any transcript as text.
+          </p>
+        </div>
+        <picture>
+          <source srcset="img/transcript-dark.png" media="(prefers-color-scheme: dark)" />
+          <img
+            src="img/transcript-light.png"
+            alt="A transcript in Intercept: each turn in a box tinted by speaker, with a timestamp and the speaker's name, such as Alex, Sam and Speaker 3"
+          />
+        </picture>
       </div>
 
       <div class="grid">
@@ -366,10 +409,18 @@
           </p>
         </div>
         <div class="feat">
-          <h3>One display or all of them</h3>
+          <h3>Keeps going when you lock</h3>
           <p>
-            Record the main display, or every display side by side, laid out the
-            way they sit in System Settings.
+            Lock your Mac or let the display turn off: sound keeps recording,
+            and the video picks up again in the same file when you're back.
+          </p>
+        </div>
+        <div class="feat">
+          <h3>Pick your devices</h3>
+          <p>
+            Choose the microphone (or none), whether to record the Mac's own
+            sound, and which camera. Intercept only asks for the permissions
+            those need.
           </p>
         </div>
         <div class="feat">
@@ -380,34 +431,29 @@
           </p>
         </div>
         <div class="feat">
-          <h3>Pauses when the display sleeps</h3>
+          <h3>Name things as you go</h3>
           <p>
-            It saves what it has, shows Paused, and starts a new file by itself
-            when you wake the Mac and unlock it.
-          </p>
-        </div>
-        <div class="feat">
-          <h3>One key</h3>
-          <p>
-            Press the big ember button, or <kbd>⇧⌘R</kbd>. It also lives in the
-            menu bar, with a timer while it records.
+            Double-click a recording to rename it. Its transcript is renamed
+            with it.
           </p>
         </div>
         <div class="feat">
           <h3>Plain files, in your folder</h3>
           <p>
-            Recordings go to <b>~/Documents/Intercept</b>, or a folder you pick,
-            and open in QuickTime, VLC or any editor.
+            Recordings go to <b>~/Documents/Intercept</b>, or a folder you
+            pick, and open in QuickTime, VLC or any editor. Press
+            <kbd>⇧⌘R</kbd> to start and stop.
           </p>
         </div>
       </div>
 
       <div class="band">
-        <h2>Nothing leaves your Mac</h2>
+        <h2>Your recordings stay on your Mac</h2>
         <p>
-          Intercept has no accounts, no analytics and no servers. It never
-          connects to the internet. Your recordings are ordinary files on your
-          disk, and only you decide where they go.
+          Intercept has no accounts, no analytics and no servers of its own.
+          Recordings are ordinary files on your disk. The only thing that ever
+          leaves your Mac is a recording's sound, sent to ElevenLabs, and only
+          when you turn on Transcribe, using your own ElevenLabs API key.
         </p>
       </div>
 
@@ -418,13 +464,16 @@
             Download the <b>.dmg</b> and drag <b>Intercept</b> to Applications.
           </li>
           <li>
-            Open it and grant <b>Microphone</b> and
-            <b>Screen &amp; System Audio Recording</b> from the main window,
-            then press <b>Relaunch</b>.
+            Open it, tick what you want to record, and grant the permissions
+            the window lists. After allowing <b>Screen Recording</b>, press
+            <b>Relaunch</b>.
           </li>
           <li>
-            Pick a mode and press the record button, or <kbd>⇧⌘R</kbd>. Press it
-            again to stop.
+            For transcripts, tick <b>Transcribe</b> and add your ElevenLabs API
+            key with <b>Add key…</b>.
+          </li>
+          <li>
+            Press the record button, or <kbd>⇧⌘R</kbd>. Press it again to stop.
           </li>
         </ol>
         <p style="font-size: 13px; color: var(--text-3)">
@@ -440,7 +489,7 @@
         <a href="https://www.girishgupta.com">www.girishgupta.com</a> · From the
         maker of <a href="https://onetaptranscribe.com">One Tap Transcribe</a
         ><br />
-        Records your Mac on your Mac. Nothing leaves it.
+        Records your Mac on your Mac.
       </footer>
     </div>
   </body>

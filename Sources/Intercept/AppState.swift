@@ -30,6 +30,9 @@ final class AppState: ObservableObject {
     /// Microphones and cameras currently connected.
     @Published private(set) var microphones: [CaptureDevice] = CaptureDevices.microphones()
     @Published private(set) var cameras: [CaptureDevice] = CaptureDevices.cameras()
+    /// Names of the system's default microphone and camera, for "System default (…)".
+    @Published private(set) var defaultMicName = CaptureDevices.defaultMicName
+    @Published private(set) var defaultCameraName = CaptureDevices.defaultCameraName
     /// Displays showing their own picture (mirrored copies don't count).
     @Published private(set) var distinctDisplayCount = Displays.distinctIDs().count
     @Published var folder: URL {
@@ -104,7 +107,7 @@ final class AppState: ObservableObject {
         // Finish any recording a crash cut off. Skip in developer test runs,
         // which start a second copy of the app alongside a real one.
         let args = CommandLine.arguments
-        if !args.contains("--selftest") && !args.contains("--snapshot") && !args.contains("--apptest") && !args.contains("--name-and-rename") && !args.contains("--transcribe") {
+        if !args.contains("--selftest") && !args.contains("--snapshot") && !args.contains("--apptest") && !args.contains("--name-and-rename") && !args.contains("--marketing-shots") && !args.contains("--transcribe") {
             Task { await recoverLeftovers() }
             // A second pass catches files that were too fresh to touch at launch.
             Task {
@@ -134,15 +137,37 @@ final class AppState: ObservableObject {
     // MARK: Permissions
 
     func refreshDisplays() {
+        guard !screenshotMode else { return }
         distinctDisplayCount = Displays.distinctIDs().count
     }
 
+    /// Set while rendering website screenshots: keep the sample values.
+    private var screenshotMode = false
+
     func refreshDevices() {
+        guard !screenshotMode else { return }
         microphones = CaptureDevices.microphones()
         cameras = CaptureDevices.cameras()
+        defaultMicName = CaptureDevices.defaultMicName
+        defaultCameraName = CaptureDevices.defaultCameraName
+    }
+
+    /// For website screenshots only: generic device names, every permission
+    /// shown as granted, and a given folder of sample recordings.
+    func prepareForScreenshot(folder: URL) {
+        screenshotMode = true
+        microphones = [CaptureDevice(id: "mic", name: "MacBook Pro Microphone")]
+        cameras = [CaptureDevice(id: "cam", name: "FaceTime HD Camera")]
+        defaultMicName = "MacBook Pro Microphone"
+        defaultCameraName = "FaceTime HD Camera"
+        micGranted = true; screenGranted = true; cameraGranted = true
+        hasAPIKey = true
+        distinctDisplayCount = 1
+        self.folder = folder
     }
 
     func refreshPermissions() {
+        guard !screenshotMode else { return }
         micGranted = Permissions.authorized(.audio)
         screenGranted = Permissions.screenAuthorized()
         cameraGranted = Permissions.authorized(.video)
