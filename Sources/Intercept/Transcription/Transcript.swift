@@ -16,11 +16,9 @@ struct Transcript: Codable, Equatable {
     var lines: [Line]
     /// Names you've typed for speakers ("speaker_0" → "Girish").
     var speakerNames: [String: String] = [:]
-    /// "scribe_v2", "scribe_v1", or "live" (the rough version made while recording).
+    /// "scribe_v2" or "scribe_v1".
     var model: String
     var createdAt = Date()
-
-    var isLive: Bool { model == "live" }
 
     // MARK: Speakers
 

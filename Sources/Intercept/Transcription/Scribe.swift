@@ -72,7 +72,7 @@ enum Scribe {
         return Transcript(lines: Transcript.lines(from: words(in: data)), model: model)
     }
 
-    /// Timed words from a Scribe response (also used for realtime messages).
+    /// Timed words from a Scribe response.
     static func words(in data: Data) -> [Transcript.Word] {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = json["words"] as? [[String: Any]] else { return [] }

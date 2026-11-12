@@ -27,12 +27,6 @@ struct InterceptApp: App {
         }
         .windowStyle(.hiddenTitleBar)
 
-        // The transcript of the recording in progress.
-        Window("Live transcript", id: "live-transcript") {
-            LiveTranscriptWindow().environmentObject(state)
-        }
-        .windowStyle(.hiddenTitleBar)
-
         MenuBarExtra {
             MenuPanel()
                 .environmentObject(state)

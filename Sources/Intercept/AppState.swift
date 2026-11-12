@@ -44,8 +44,6 @@ final class AppState: ObservableObject {
     @Published private(set) var outLevel: Float = 0    // sound the Mac plays
     /// The display is off: only sound is being recorded until it's back.
     @Published private(set) var screenPaused = false
-    /// Live transcription of the recording in progress (when Transcribe is on).
-    @Published private(set) var live: LiveTranscriber?
     /// Whether an ElevenLabs key is saved in the Keychain.
     @Published private(set) var hasAPIKey = APIKeyStore.hasKey
     /// Recordings being transcribed right now.
@@ -106,7 +104,7 @@ final class AppState: ObservableObject {
         // Finish any recording a crash cut off. Skip in developer test runs,
         // which start a second copy of the app alongside a real one.
         let args = CommandLine.arguments
-        if !args.contains("--selftest") && !args.contains("--snapshot") && !args.contains("--apptest") {
+        if !args.contains("--selftest") && !args.contains("--snapshot") && !args.contains("--apptest") && !args.contains("--name-and-rename") && !args.contains("--transcribe") {
             Task { await recoverLeftovers() }
             // A second pass catches files that were too fresh to touch at launch.
             Task {
@@ -203,10 +201,6 @@ final class AppState: ObservableObject {
         session.onUserStopped = { [weak self] in
             Task { @MainActor in self?.stop() }
         }
-        // Live transcription: everything recorded is also streamed to ElevenLabs.
-        let live: LiveTranscriber? = settings.transcribe && settings.hasAudio && hasAPIKey
-            ? LiveTranscriber(mic: settings.recordsMic, macSound: settings.recordsMacSound) : nil
-        if let live { session.onAudio = { chunk, isMic in live.feed(chunk, isMic: isMic) } }
         self.session = session
         self.finalURL = final
         status = .starting
@@ -217,8 +211,6 @@ final class AppState: ObservableObject {
                 startedAt = Date()
                 elapsed = 0
                 status = .recording
-                live?.start()
-                self.live = live
                 preventSleep(true)
                 startTicker()
             } catch {
@@ -235,19 +227,14 @@ final class AppState: ObservableObject {
         stopTicker()
         preventSleep(false)
         let fileType = session.settings.fileType
+        let transcribeAfter = session.settings.transcribe && session.settings.hasAudio
         self.session = nil
 
         Task {
             do {
                 let raw = try await session.stop()
                 let (saved, mixError) = await Mixdown.finish(raw: raw, to: finalURL, fileType: fileType)
-                // Keep the live transcript as a stand-in, then do it properly.
-                if let live = self.live {
-                    await live.finish()
-                    if !live.lines.isEmpty { try? live.transcript.save(for: saved) }
-                    self.live = nil
-                    transcribe(saved)
-                }
+                if transcribeAfter { transcribe(saved) }
                 refreshRecordings()
                 status = mixError.map { .failed("Saved an unmixed .mov instead (\($0.localizedDescription)).") } ?? .idle
             } catch {

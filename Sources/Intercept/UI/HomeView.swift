@@ -7,7 +7,6 @@ import AppKit
 /// permissions, recordings table, footer.
 struct HomeView: View {
     @EnvironmentObject var state: AppState
-    @Environment(\.openWindow) private var openWindow
     @State private var showKeySheet = false
 
     var body: some View {
@@ -40,10 +39,6 @@ struct HomeView: View {
             optionsCard
 
             recordBanner
-
-            if let live = state.live {
-                TranscriptTicker(live: live) { openWindow(id: "live-transcript") }
-            }
 
             if let problem = state.transcriptProblem {
                 NoticeBanner(problem) { state.transcriptProblem = nil }

@@ -14,6 +14,16 @@ into a single file.
   Continuity Camera). With Screen it sits in a box in the bottom-right corner;
   on its own it fills the frame.
 
+- **Transcribe** (under Audio) sends the sound to ElevenLabs Scribe v2 when a
+  recording stops, and saves a transcript with speakers next to it as
+  `<name>.transcript.json`. Add your ElevenLabs API key with **Add key…**; it's
+  kept in the Keychain. Older recordings can be transcribed from the
+  Recordings list.
+
+The transcript window shows each turn tinted in the speaker's colour.
+Double-click a speaker's name to give them a real name; double-click a
+recording's name in the list to rename the file (its transcript follows).
+
 Anything with Screen or Camera saves an `.mp4`; Audio alone saves an `.m4a`
 (AAC, 48 kHz stereo). Files are named `Intercept <date> at <time>`.
 

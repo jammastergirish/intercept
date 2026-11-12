@@ -80,33 +80,24 @@ struct TranscriptLineRow: View {
     }
 }
 
-/// The scrolling list of turns, shared by saved and live transcripts.
+/// The scrolling list of turns.
 private struct TranscriptLines: View {
     let lines: [Transcript.Line]
     let name: (Transcript.Line) -> String?
     let colorIndex: (Transcript.Line) -> Int?
     var onRename: ((String, String) -> Void)?   // (speaker id, new name)
-    var followLatest = false
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(lines) { line in
-                        TranscriptLineRow(line: line, speakerName: name(line), colorIndex: colorIndex(line),
-                                          onRename: onRename.flatMap { rename in
-                                              line.speaker.map { id in { rename(id, $0) } }
-                                          })
-                        .id(line.id)
-                    }
-                }
-                .padding(20)
-            }
-            .onChange(of: lines.count) { _, _ in
-                if followLatest, let last = lines.last {
-                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+        ScrollView {
+            LazyVStack(spacing: 6) {
+                ForEach(lines) { line in
+                    TranscriptLineRow(line: line, speakerName: name(line), colorIndex: colorIndex(line),
+                                      onRename: onRename.flatMap { rename in
+                                          line.speaker.map { id in { rename(id, $0) } }
+                                      })
                 }
             }
+            .padding(20)
         }
     }
 }
@@ -174,7 +165,7 @@ struct TranscriptWindow: View {
         guard let transcript else { return "NO TRANSCRIPT YET" }
         let speakers = transcript.speakers.count
         let who = speakers > 1 ? " · \(speakers) SPEAKERS · DOUBLE-CLICK A NAME TO CHANGE IT" : ""
-        return (transcript.isLive ? "ROUGH LIVE TRANSCRIPT" : "\(transcript.lines.count) LINES") + who
+        return "\(transcript.lines.count) LINES" + who
     }
 
     private var emptyState: some View {
@@ -198,93 +189,6 @@ struct TranscriptWindow: View {
     }
 
     private func reload() { transcript = Transcript.load(for: recording) }
-}
-
-// MARK: - The live transcript while recording
-
-struct LiveTranscriptWindow: View {
-    @EnvironmentObject var state: AppState
-
-    var body: some View {
-        Group {
-            if let live = state.live {
-                LiveTranscriptBody(live: live)
-            } else {
-                VStack {
-                    Spacer()
-                    Text("Not transcribing right now. When a recording stops, its full transcript opens from the Recordings list.")
-                        .font(.system(size: 13)).foregroundStyle(Theme.textTertiary)
-                        .multilineTextAlignment(.center).padding(30)
-                    Spacer()
-                }
-            }
-        }
-        .frame(minWidth: 520, minHeight: 420)
-        .background(Theme.windowBG)
-    }
-}
-
-private struct LiveTranscriptBody: View {
-    @ObservedObject var live: LiveTranscriber
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                MonoLabel(text: "Live transcript", size: 12, tracking: 0.8, color: Theme.textPrimary)
-                Spacer()
-                StatusBadge(text: "Live")
-            }
-            .padding(.horizontal, 20).padding(.top, 30).padding(.bottom, 12)
-            Divider().overlay(Theme.divider)
-            TranscriptLines(
-                lines: live.lines + (live.partial.isEmpty ? [] :
-                    [Transcript.Line(id: -1, start: live.lines.last?.end ?? 0, end: 0, speaker: nil, text: live.partial)]),
-                name: { line in line.speaker.map { "Speaker \(speakerOrder.firstIndex(of: $0).map { $0 + 1 } ?? 1)" } },
-                colorIndex: { line in line.speaker.flatMap { speakerOrder.firstIndex(of: $0) } },
-                followLatest: true)
-            if let problem = live.problem {
-                NoticeBanner(problem).padding(12)
-            }
-        }
-    }
-
-    private var speakerOrder: [String] {
-        var seen: [String] = []
-        for l in live.lines { if let s = l.speaker, !seen.contains(s) { seen.append(s) } }
-        return seen
-    }
-}
-
-// MARK: - The ticker under the record banner
-
-struct TranscriptTicker: View {
-    @ObservedObject var live: LiveTranscriber
-    var open: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            StatusBadge(text: "Live")
-            Text(live.problem ?? (live.ticker.isEmpty ? "Listening…" : live.ticker))
-                .font(.system(size: 13, design: .serif))
-                .foregroundStyle(live.problem == nil ? Theme.inverseText : Theme.emberText)
-                .lineLimit(1)
-                .truncationMode(.head)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .animation(.easeOut(duration: 0.15), value: live.ticker)
-            Button(action: open) {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.emberText)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Open the full live transcript")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(Theme.inversePanelBG, in: RoundedRectangle(cornerRadius: 10))
-    }
 }
 
 // MARK: - Adding the API key

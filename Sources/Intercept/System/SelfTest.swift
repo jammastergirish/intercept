@@ -36,6 +36,40 @@ enum SelfTest {
             runAppTest(seconds: seconds, folder: URL(fileURLWithPath: args[i + 2], isDirectory: true))
             return
         }
+        // `--transcribe <file>`: transcribe a recording with ElevenLabs, save the
+        // transcript beside it, write a summary to <file>.scribe.txt, and quit.
+        if let i = args.firstIndex(of: "--transcribe"), args.count > i + 1 {
+            let file = URL(fileURLWithPath: args[i + 1])
+            Task {
+                var out: String
+                do {
+                    let t = try await Scribe.transcribe(file)
+                    try t.save(for: file)
+                    out = "OK model \(t.model), \(t.lines.count) lines, speakers \(t.speakers)\n" + t.plainText
+                } catch {
+                    out = "FAILED: \(error.localizedDescription)"
+                }
+                try? out.write(to: file.appendingPathExtension("scribe.txt"), atomically: true, encoding: .utf8)
+                exit(0)
+            }
+            return
+        }
+        // `--name-and-rename <file> <speaker id> <name> <new file name>`: name a
+        // speaker in a recording's transcript, rename the recording, report.
+        if let i = args.firstIndex(of: "--name-and-rename"), args.count > i + 4 {
+            let file = URL(fileURLWithPath: args[i + 1])
+            let state = AppState()
+            state.nameSpeaker(args[i + 2], as: args[i + 3], in: file)
+            let item = RecordingItem(url: file, date: Date(), bytes: file.fileSize)
+            let ok = state.rename(item, to: args[i + 4])
+            let renamed = file.deletingLastPathComponent().appendingPathComponent(args[i + 4])
+                .appendingPathExtension(file.pathExtension)
+            let t = Transcript.load(for: renamed)
+            let report = "rename ok: \(ok)\nnames: \(t?.speakerNames ?? [:])\n" + (t?.plainText ?? "no transcript at new name")
+            try? report.write(to: file.deletingLastPathComponent().appendingPathComponent("rename-test.txt"),
+                              atomically: true, encoding: .utf8)
+            exit(0)
+        }
         // `--snapshot-transcript <png>`: render sample transcript lines (dark) and quit.
         if let i = args.firstIndex(of: "--snapshot-transcript"), args.count > i + 1 {
             var t = Transcript(lines: [
@@ -167,8 +201,11 @@ enum SelfTest {
         let saved = SettingsStore.load()
         let state = AppState()
         state.folder = folder
-        state.settings.screen = true
+        let withTranscribe = CommandLine.arguments.contains("--with-transcribe")
+        state.settings.screen = !withTranscribe
         state.settings.audio = true
+        state.settings.camera = false
+        state.settings.transcribe = withTranscribe
         let t0 = Date()
         var log: [String] = []
         var last = ""
@@ -189,6 +226,12 @@ enum SelfTest {
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
             note()
+            // Wait for the full transcription to finish, if one started.
+            while !state.transcribing.isEmpty, Date().timeIntervalSince(t0) < seconds + 300 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            if !state.transcribing.isEmpty { log.append("transcription still running") }
+            if let p = state.transcriptProblem { log.append("transcript problem: \(p)") }
             let files = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
             log.append("files: \(files)")
             if let f = savedFolder { defaults.set(f, forKey: "folder") } else { defaults.removeObject(forKey: "folder") }
