@@ -2,8 +2,9 @@ import SwiftUI
 import GraphiteEmber
 import AppKit
 
-/// Main window — "Graphite & Ember": mono titlebar, mode picker, inverse
-/// record banner with live levels, permissions, last-recording card, footer.
+/// Main window — "Graphite & Ember": mono titlebar, Screen / Audio / Camera
+/// tick-boxes with their options, inverse record banner with live levels,
+/// permissions, recordings table, footer.
 struct HomeView: View {
     @EnvironmentObject var state: AppState
 
@@ -16,7 +17,9 @@ struct HomeView: View {
         .frame(width: 420)
         .fixedSize(horizontal: false, vertical: true)   // window hugs its content
         .background(Theme.windowBG)
-        .onAppear { state.refreshPermissions(); state.refreshDisplays(); state.refreshRecordings() }
+        .onAppear {
+            state.refreshPermissions(); state.refreshDisplays(); state.refreshDevices(); state.refreshRecordings()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
             state.refreshDisplays()
         }
@@ -30,16 +33,8 @@ struct HomeView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SegmentPicker(segments: [
-                Segment(value: RecordingMode.screenOnly, title: RecordingMode.screenOnly.title, systemImage: "display"),
-                Segment(value: RecordingMode.audio, title: RecordingMode.audio.title, systemImage: "waveform"),
-                Segment(value: RecordingMode.screen, title: RecordingMode.screen.title, systemImage: "film"),
-            ], selection: $state.mode, disabled: state.isLocked)
-
-            // Only worth asking when there's more than one display to choose from.
-            if state.mode.hasVideo && state.distinctDisplayCount > 1 {
-                displaysRow
-            }
+            sourcePicker
+            optionsCard
 
             recordBanner
 
@@ -51,7 +46,7 @@ struct HomeView: View {
                 NoticeBanner(note) { state.recoveryNote = nil }
             }
 
-            if !state.allPermissionsGranted {
+            if !state.neededPermissionsGranted {
                 permissionsCard
             }
 
@@ -72,28 +67,131 @@ struct HomeView: View {
     }
 
 
-    // MARK: Displays
+    // MARK: What to record
 
-    private var displaysRow: some View {
-        HStack(spacing: 12) {
-            MonoLabel(text: "Displays", size: 11, tracking: 1.0, color: Theme.textSecondary)
-            Spacer()
-            Text(displaysNote)
-                .font(.mono(11))
-                .foregroundStyle(Theme.monoFaint)
-            SegmentPicker(segments: [
-                Segment(value: DisplayChoice.main, title: "Main", systemImage: nil),
-                Segment(value: DisplayChoice.all, title: "All", systemImage: nil),
-            ], selection: $state.displayChoice, disabled: state.isLocked, compact: true)
-            .frame(width: 130)
+    /// Screen / Audio / Camera tick-boxes. At least one stays ticked.
+    private var sourcePicker: some View {
+        ChipGroup(disabled: state.isLocked) {
+            ToggleChip("Screen", systemImage: "display", isOn: source(\.screen))
+            ToggleChip("Audio", systemImage: "waveform", isOn: source(\.audio))
+            ToggleChip("Camera", systemImage: "video", isOn: source(\.camera))
         }
+    }
+
+    /// A binding to one source that refuses to untick the last one.
+    private func source(_ key: WritableKeyPath<CaptureSettings, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { state.settings[keyPath: key] },
+            set: { on in
+                var next = state.settings
+                next[keyPath: key] = on
+                if next.screen || next.audio || next.camera { state.settings = next }
+            })
+    }
+
+    /// One row of options for each ticked source.
+    @ViewBuilder private var optionsCard: some View {
+        let rows = optionRows
+        if !rows.isEmpty {
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
+                    if i > 0 { Divider().overlay(Theme.divider) }
+                    row
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(Theme.cardBG, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.fieldBorder, lineWidth: 1))
+        }
+    }
+
+    private var optionRows: [AnyView] {
+        var rows: [AnyView] = []
+        let s = state.settings
+        // Displays: only worth asking when there's more than one.
+        if s.screen && state.distinctDisplayCount > 1 {
+            rows.append(AnyView(optionRow("Displays") {
+                Text(displaysNote).font(.mono(11)).foregroundStyle(Theme.monoFaint)
+                SegmentPicker(segments: [
+                    Segment(value: DisplayChoice.main, title: "Main", systemImage: nil),
+                    Segment(value: DisplayChoice.all, title: "All", systemImage: nil),
+                ], selection: $state.settings.displays, disabled: state.isLocked, compact: true)
+                .frame(width: 130)
+            }))
+        }
+        if s.audio {
+            rows.append(AnyView(optionRow("Microphone") {
+                OptionMenu(options: micOptions, selection: micSelection, disabled: state.isLocked)
+                    .frame(width: 210)
+            }))
+            rows.append(AnyView(optionRow("Mac sound") {
+                Toggle("Record what the Mac plays", isOn: $state.settings.macSound)
+                    .toggleStyle(EmberCheckboxStyle(fontSize: 12))
+                    .disabled(state.isLocked)
+            }))
+        }
+        if s.camera {
+            rows.append(AnyView(optionRow("Camera") {
+                OptionMenu(options: cameraOptions, selection: cameraSelection, disabled: state.isLocked)
+                    .frame(width: 210)
+            }))
+        }
+        return rows
+    }
+
+    private func optionRow<Control: View>(_ label: String, @ViewBuilder control: () -> Control) -> some View {
+        HStack(spacing: 10) {
+            MonoLabel(text: label, size: 10.5, tracking: 0.9, color: Theme.textSecondary)
+            Spacer(minLength: 8)
+            control()
+        }
+        .padding(.vertical, 8)
     }
 
     private var displaysNote: String {
         let n = state.distinctDisplayCount
-        return state.displayChoice == .main ? "1 of \(n)" : "\(n) side by side"
+        return state.settings.displays == .main ? "1 of \(n)" : "\(n) side by side"
     }
 
+    // Microphone menu: "System default (name)", each mic, "None". The value is
+    // "default", "none", or a mic's ID.
+    private var micOptions: [OptionMenu<String>.Option] {
+        var o = [OptionMenu.Option("default", "System default" + (CaptureDevices.defaultMicName.map { " (\($0))" } ?? ""))]
+        o += state.microphones.map { OptionMenu.Option($0.id, $0.name) }
+        if let id = state.settings.micID, !state.microphones.contains(where: { $0.id == id }) {
+            o.append(OptionMenu.Option(id, "Not connected"))
+        }
+        o.append(OptionMenu.Option("none", "None"))
+        return o
+    }
+
+    private var micSelection: Binding<String> {
+        Binding(
+            get: { state.settings.useMic ? (state.settings.micID ?? "default") : "none" },
+            set: { v in
+                switch v {
+                case "none": state.settings.useMic = false
+                case "default": state.settings.useMic = true; state.settings.micID = nil
+                default: state.settings.useMic = true; state.settings.micID = v
+                }
+            })
+    }
+
+    // Camera menu: "System default (name)" and each camera.
+    private var cameraOptions: [OptionMenu<String>.Option] {
+        var o = [OptionMenu.Option("default", "System default" + (CaptureDevices.defaultCameraName.map { " (\($0))" } ?? ""))]
+        o += state.cameras.map { OptionMenu.Option($0.id, $0.name) }
+        if let id = state.settings.cameraID, !state.cameras.contains(where: { $0.id == id }) {
+            o.append(OptionMenu.Option(id, "Not connected"))
+        }
+        return o
+    }
+
+    private var cameraSelection: Binding<String> {
+        Binding(
+            get: { state.settings.cameraID ?? "default" },
+            set: { state.settings.cameraID = $0 == "default" ? nil : $0 })
+    }
 
     // MARK: Record banner
 
@@ -118,7 +216,7 @@ struct HomeView: View {
                 LevelMeter(label: "In", level: state.inLevel)
                 LevelMeter(label: "Out", level: state.outLevel)
             }
-            .opacity(state.mode.hasAudio ? 1 : 0.3)   // no sound recorded in Screen mode
+            .opacity(state.settings.hasAudio ? 1 : 0.3)   // dim when no sound is recorded
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -130,13 +228,13 @@ struct HomeView: View {
         case .starting: return "Starting…"
         case .saving: return "Saving file…"
         case .recording where state.screenPaused:
-            return state.mode.hasAudio ? "Display off · still recording sound" : "Display off · waiting for it"
+            return state.settings.hasAudio || state.settings.camera
+                ? "Display off · still recording" : "Display off · waiting for it"
         case .recording:
-            switch state.mode {
-            case .screenOnly: return "Screen only, no sound"
-            case .audio: return "Mic and system audio"
-            case .screen: return "Screen, mic and system audio"
-            }
+            let s = state.settings
+            let parts = [s.screen ? "screen" : nil, s.camera ? "camera" : nil,
+                         s.recordsMic ? "mic" : nil, s.recordsMacSound ? "Mac sound" : nil].compactMap { $0 }
+            return parts.joined(separator: ", ").capitalizedFirst
         default:
             return "⇧⌘R to record"
         }
@@ -147,14 +245,12 @@ struct HomeView: View {
     private var permissionsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             MonoLabel(text: "Permissions", size: 11, tracking: 1.0, color: Theme.textSecondary)
-            permissionRow(icon: "mic", title: "Microphone",
-                          detail: "Records what goes in",
-                          granted: state.micGranted) { state.grantMicrophone() }
-            Divider().overlay(Theme.divider)
-            permissionRow(icon: "rectangle.dashed.badge.record", title: "Screen & System Audio",
-                          detail: "Records the screen and what comes out",
-                          granted: state.screenGranted) { state.grantScreen() }
-            if !state.screenGranted {
+            let rows = permissionRows
+            ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
+                if i > 0 { Divider().overlay(Theme.divider) }
+                row
+            }
+            if state.needsScreen && !state.screenGranted {
                 HStack {
                     Text("After allowing Screen & System Audio Recording, macOS needs Intercept to relaunch.")
                         .font(.system(size: 11))
@@ -169,6 +265,25 @@ struct HomeView: View {
         .padding(14)
         .background(Theme.cardBG, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.fieldBorder, lineWidth: 1))
+    }
+
+    /// Only the permissions that what you've ticked actually needs.
+    private var permissionRows: [AnyView] {
+        var rows: [AnyView] = []
+        if state.needsMic {
+            rows.append(AnyView(permissionRow(icon: "mic", title: "Microphone", detail: "Records what goes in",
+                                              granted: state.micGranted) { state.grantMicrophone() }))
+        }
+        if state.needsCamera {
+            rows.append(AnyView(permissionRow(icon: "video", title: "Camera", detail: "Records your camera",
+                                              granted: state.cameraGranted) { state.grantCamera() }))
+        }
+        if state.needsScreen {
+            rows.append(AnyView(permissionRow(icon: "rectangle.dashed.badge.record", title: "Screen Recording",
+                                              detail: "Records the screen",
+                                              granted: state.screenGranted) { state.grantScreen() }))
+        }
+        return rows
     }
 
     private func permissionRow(icon: String, title: String, detail: String,
@@ -264,4 +379,9 @@ struct RecordButton: View {
             }
         }
     }
+}
+
+private extension String {
+    /// "screen, mic" → "Screen, mic".
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }

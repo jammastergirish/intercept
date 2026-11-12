@@ -8,7 +8,7 @@ let package = Package(
     ],
     dependencies: [
         // Shared "Graphite & Ember" theme, components and build scripts.
-        .package(url: "https://github.com/jammastergirish/GraphiteEmber.git", from: "1.0.0")
+        .package(url: "https://github.com/jammastergirish/GraphiteEmber.git", from: "1.1.0")
     ],
     targets: [
         .executableTarget(

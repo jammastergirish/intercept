@@ -1,13 +1,13 @@
 {
-  "originHash" : "fb189c2d8cc762b0d8fe40d5bcf29be7dfdf20ad77c5d47ede75d64df9d20f49",
+  "originHash" : "1d97eae2b1d1a876c595491df0070b41d3fa63c539828031ae6fde82f41deb1b",
   "pins" : [
     {
       "identity" : "graphiteember",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jammastergirish/GraphiteEmber.git",
       "state" : {
-        "revision" : "a1d889536d44f4b3fe08037b3c5f0a7987afbf74",
-        "version" : "1.0.0"
+        "revision" : "60b5fbd3cf3553e55e0053f3503f05d1f345e8e1",
+        "version" : "1.1.0"
       }
     }
   ],

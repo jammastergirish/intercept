@@ -23,12 +23,13 @@ final class AppState: ObservableObject {
 
     // MARK: Published state
 
-    @Published var mode: RecordingMode {
-        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "mode") }
+    /// What to record (screen / audio / camera and their options). Saved.
+    @Published var settings: CaptureSettings {
+        didSet { SettingsStore.save(settings) }
     }
-    @Published var displayChoice: DisplayChoice {
-        didSet { UserDefaults.standard.set(displayChoice.rawValue, forKey: "displays") }
-    }
+    /// Microphones and cameras currently connected.
+    @Published private(set) var microphones: [CaptureDevice] = CaptureDevices.microphones()
+    @Published private(set) var cameras: [CaptureDevice] = CaptureDevices.cameras()
     /// Displays showing their own picture (mirrored copies don't count).
     @Published private(set) var distinctDisplayCount = Displays.distinctIDs().count
     @Published var folder: URL {
@@ -47,8 +48,9 @@ final class AppState: ObservableObject {
     @Published private(set) var recordings: [RecordingItem] = []
     /// Message about recordings finished after a crash, shown until dismissed.
     @Published var recoveryNote: String?
-    @Published private(set) var micGranted = Permissions.microphoneAuthorized()
+    @Published private(set) var micGranted = Permissions.authorized(.audio)
     @Published private(set) var screenGranted = Permissions.screenAuthorized()
+    @Published private(set) var cameraGranted = Permissions.authorized(.video)
 
     var isRecording: Bool { status == .recording }
     /// A recording is running. (Kept separate from `isRecording` for the UI.)
@@ -56,12 +58,13 @@ final class AppState: ObservableObject {
     var isBusy: Bool { status == .starting || status == .saving }
     /// Settings and Quit are locked while a recording is running or saving.
     var isLocked: Bool { isActive || isBusy }
-    var allPermissionsGranted: Bool { micGranted && screenGranted }
-    /// Screen-only recording doesn't use the microphone.
-    /// Audio needs the microphone; anything with video needs screen recording.
+    /// Each permission matters only if what you've chosen to record needs it.
     /// (System sound has its own permission, which macOS asks for on first use.)
-    private var neededPermissionsGranted: Bool {
-        (micGranted || !mode.hasAudio) && (screenGranted || !mode.hasVideo)
+    var needsMic: Bool { settings.recordsMic }
+    var needsScreen: Bool { settings.screen }
+    var needsCamera: Bool { settings.camera }
+    var neededPermissionsGranted: Bool {
+        (micGranted || !needsMic) && (screenGranted || !needsScreen) && (cameraGranted || !needsCamera)
     }
 
     // MARK: Private
@@ -75,13 +78,19 @@ final class AppState: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
-        mode = RecordingMode(rawValue: defaults.string(forKey: "mode") ?? "") ?? .screen
-        displayChoice = DisplayChoice(rawValue: defaults.string(forKey: "displays") ?? "") ?? .main
+        settings = SettingsStore.load()
         if let path = defaults.string(forKey: "folder") {
             folder = URL(fileURLWithPath: path, isDirectory: true)
         } else {
             folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Intercept", isDirectory: true)
+        }
+
+        // Keep the microphone and camera lists current as devices come and go.
+        for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshDevices() }
+            }
         }
 
         // Finish any recording a crash cut off. Skip in developer test runs,
@@ -120,19 +129,24 @@ final class AppState: ObservableObject {
         distinctDisplayCount = Displays.distinctIDs().count
     }
 
-    func refreshPermissions() {
-        micGranted = Permissions.microphoneAuthorized()
-        screenGranted = Permissions.screenAuthorized()
+    func refreshDevices() {
+        microphones = CaptureDevices.microphones()
+        cameras = CaptureDevices.cameras()
     }
 
-    func grantMicrophone() {
-        if Permissions.microphoneUndetermined() {
-            Task {
-                await Permissions.requestMicrophone()
-                refreshPermissions()
-            }
-        } else {
-            Permissions.openMicrophoneSettings()
+    func refreshPermissions() {
+        micGranted = Permissions.authorized(.audio)
+        screenGranted = Permissions.screenAuthorized()
+        cameraGranted = Permissions.authorized(.video)
+    }
+
+    func grantCamera() { grant(.video) }
+    func grantMicrophone() { grant(.audio) }
+
+    private func grant(_ media: AVMediaType) {
+        Task {
+            await Permissions.request(media)
+            refreshPermissions()
         }
     }
 
@@ -156,8 +170,9 @@ final class AppState: ObservableObject {
     func start() {
         refreshPermissions()
         guard neededPermissionsGranted else {
-            if !micGranted && mode.hasAudio { grantMicrophone() }
-            if !screenGranted && mode.hasVideo { grantScreen() }
+            if !micGranted && needsMic { grantMicrophone() }
+            if !screenGranted && needsScreen { grantScreen() }
+            if !cameraGranted && needsCamera { grantCamera() }
             status = .failed("Grant the permissions above first.")
             return
         }
@@ -170,10 +185,10 @@ final class AppState: ObservableObject {
         }
 
         let name = "Intercept \(Format.fileStamp(Date()))"
-        let final = folder.appendingPathComponent(name).appendingPathExtension(mode.fileExtension).uniqued()
+        let final = folder.appendingPathComponent(name).appendingPathExtension(settings.fileExtension).uniqued()
         let raw = folder.appendingPathComponent(".\(name).capture.mov")
 
-        let session = CaptureSession(mode: mode, displays: displayChoice, rawURL: raw)
+        let session = CaptureSession(settings: settings, rawURL: raw)
         // Pressing Stop in macOS's own screen-recording menu ends the recording.
         session.onUserStopped = { [weak self] in
             Task { @MainActor in self?.stop() }
@@ -203,13 +218,13 @@ final class AppState: ObservableObject {
         status = .saving
         stopTicker()
         preventSleep(false)
-        let mode = session.mode
+        let fileType = session.settings.fileType
         self.session = nil
 
         Task {
             do {
                 let raw = try await session.stop()
-                let (_, mixError) = await Mixdown.finish(raw: raw, to: finalURL, fileType: mode.fileType)
+                let (_, mixError) = await Mixdown.finish(raw: raw, to: finalURL, fileType: fileType)
                 refreshRecordings()
                 status = mixError.map { .failed("Saved an unmixed .mov instead (\($0.localizedDescription)).") } ?? .idle
             } catch {
@@ -301,4 +316,39 @@ final class AppState: ObservableObject {
         return max(0, min(1, (db + 50) / 50))
     }
 
+}
+
+/// Saves and loads the recording choices between launches.
+enum SettingsStore {
+    private static let d = UserDefaults.standard
+
+    static func load() -> CaptureSettings {
+        var s = CaptureSettings()
+        if d.object(forKey: "src.screen") != nil {
+            s.screen = d.bool(forKey: "src.screen")
+            s.audio = d.bool(forKey: "src.audio")
+            s.camera = d.bool(forKey: "src.camera")
+        } else if let old = d.string(forKey: "mode") {
+            // Earlier versions saved one of three modes.
+            s.screen = old != "audio"
+            s.audio = old != "screenOnly"
+        }
+        s.displays = DisplayChoice(rawValue: d.string(forKey: "displays") ?? "") ?? .main
+        if d.object(forKey: "mic.use") != nil { s.useMic = d.bool(forKey: "mic.use") }
+        s.micID = d.string(forKey: "mic.id")
+        if d.object(forKey: "macSound") != nil { s.macSound = d.bool(forKey: "macSound") }
+        s.cameraID = d.string(forKey: "camera.id")
+        return s
+    }
+
+    static func save(_ s: CaptureSettings) {
+        d.set(s.screen, forKey: "src.screen")
+        d.set(s.audio, forKey: "src.audio")
+        d.set(s.camera, forKey: "src.camera")
+        d.set(s.displays.rawValue, forKey: "displays")
+        d.set(s.useMic, forKey: "mic.use")
+        d.set(s.micID, forKey: "mic.id")
+        d.set(s.macSound, forKey: "macSound")
+        d.set(s.cameraID, forKey: "camera.id")
+    }
 }

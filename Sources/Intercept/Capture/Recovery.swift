@@ -43,10 +43,9 @@ enum Recovery {
             }
 
             let hasVideo = !((try? await asset.loadTracks(withMediaType: .video)) ?? []).isEmpty
-            let mode: RecordingMode = hasVideo ? .screen : .audio
             let out = folder.appendingPathComponent("\(name) (recovered)")
-                .appendingPathExtension(mode.fileExtension).uniqued()
-            let (saved, error) = await Mixdown.finish(raw: raw, to: out, fileType: mode.fileType)
+                .appendingPathExtension(hasVideo ? "mp4" : "m4a").uniqued()
+            let (saved, error) = await Mixdown.finish(raw: raw, to: out, fileType: hasVideo ? .mp4 : .m4a)
             if error == nil { result.recovered.append(saved) } else { result.failed.append(saved) }
         }
         return result

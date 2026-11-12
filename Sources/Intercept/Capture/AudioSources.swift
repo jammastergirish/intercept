@@ -199,14 +199,20 @@ final class SystemAudioTap {
 
 // MARK: - The microphone
 
-/// Records the default microphone with AVAudioEngine. Restarts by itself if
-/// the input device changes (e.g. AirPods connect).
+/// Records a microphone with AVAudioEngine: the one you picked, or the system
+/// default. Restarts by itself if the input device changes (e.g. AirPods connect).
 final class MicrophoneSource {
     var onChunk: ((CanonicalAudio.Chunk) -> Void)?
 
+    /// The microphone's UID (nil = whatever the system default is).
+    private let deviceUID: String?
     private let engine = AVAudioEngine()
     private let converter = CanonicalAudio.Converter()
     private var observer: NSObjectProtocol?
+
+    init(deviceUID: String? = nil) {
+        self.deviceUID = deviceUID
+    }
 
     func start() throws {
         try install()
@@ -228,6 +234,12 @@ final class MicrophoneSource {
 
     private func install() throws {
         let input = engine.inputNode
+        // Point the engine at the chosen microphone, if it's still connected.
+        if let deviceUID, let unit = input.audioUnit,
+           var device = CaptureDevices.audioDeviceID(forUID: deviceUID) {
+            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                 &device, UInt32(MemoryLayout<AudioDeviceID>.size))
+        }
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw CaptureError.writerFailed("no microphone available")

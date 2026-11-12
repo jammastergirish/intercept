@@ -39,9 +39,9 @@ struct MenuPanel: View {
 
     private var subtitle: String {
         switch state.status {
-        case .recording: return "\(Format.clock(state.elapsed)) · \(state.mode.title)"
+        case .recording: return "\(Format.clock(state.elapsed)) · \(state.settings.summary)"
         case .saving: return "Saving file…"
-        default: return "Mode: \(state.mode.title)"
+        default: return "Mode: \(state.settings.summary)"
         }
     }
 }

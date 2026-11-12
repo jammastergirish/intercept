@@ -2,27 +2,27 @@ import AVFoundation
 import AppKit
 import CoreGraphics
 
-/// The two macOS permissions Intercept needs: Microphone (what goes in) and
-/// Screen & System Audio Recording (the screen and what comes out).
+/// The macOS permissions Intercept asks for: Microphone, Camera, and Screen &
+/// System Audio Recording. (System sound has its own permission, which macOS
+/// asks for the first time Intercept records it.)
 enum Permissions {
 
-    // MARK: Microphone
+    // MARK: Microphone and camera
 
-    static func microphoneAuthorized() -> Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    /// `.audio` for the microphone, `.video` for the camera.
+    static func authorized(_ media: AVMediaType) -> Bool {
+        AVCaptureDevice.authorizationStatus(for: media) == .authorized
     }
 
-    static func microphoneUndetermined() -> Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
-    }
-
-    @discardableResult
-    static func requestMicrophone() async -> Bool {
-        await AVCaptureDevice.requestAccess(for: .audio)
-    }
-
-    static func openMicrophoneSettings() {
-        open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+    /// Ask the first time; after that macOS only lets you change it in
+    /// System Settings, so open the right page there.
+    static func request(_ media: AVMediaType) async {
+        if AVCaptureDevice.authorizationStatus(for: media) == .notDetermined {
+            await AVCaptureDevice.requestAccess(for: media)
+        } else {
+            open("x-apple.systempreferences:com.apple.preference.security?" +
+                 (media == .video ? "Privacy_Camera" : "Privacy_Microphone"))
+        }
     }
 
     // MARK: Screen & System Audio Recording

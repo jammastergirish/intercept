@@ -22,6 +22,8 @@
 	<string>26.0</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Intercept records the sound your Mac plays.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Intercept records your camera when you tick Camera.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Girish Gupta · www.girishgupta.com</string>
 	<key>NSMicrophoneUsageDescription</key>

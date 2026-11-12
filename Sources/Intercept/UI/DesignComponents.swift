@@ -53,65 +53,6 @@ struct LevelMeter: View {
     }
 }
 
-// MARK: - Segmented picker
-
-struct Segment<Value: Hashable>: Identifiable {
-    let value: Value
-    let title: String
-    let systemImage: String?
-    var id: Value { value }
-}
-
-struct SegmentPicker<Value: Hashable>: View {
-    let segments: [Segment<Value>]
-    @Binding var selection: Value
-    var disabled: Bool = false
-    var compact: Bool = false
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(segments) { seg in
-                let selected = seg.value == selection
-                Button {
-                    selection = seg.value
-                } label: {
-                    HStack(spacing: 6) {
-                        if let icon = seg.systemImage {
-                            Image(systemName: icon).font(.system(size: compact ? 10 : 11, weight: .medium))
-                        }
-                        Text(seg.title).font(.system(size: compact ? 11.5 : 12.5, weight: selected ? .semibold : .regular))
-                    }
-                    .foregroundStyle(selected ? Theme.emberText : Theme.textSecondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, compact ? 4 : 6)
-                    .background(selected ? Theme.cardBG : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6)
-                        .stroke(selected ? Theme.fieldBorder : Color.clear, lineWidth: 1))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(2)
-        .background(Theme.checkboxOff, in: RoundedRectangle(cornerRadius: 8))
-        .disabled(disabled)
-        .opacity(disabled ? 0.55 : 1)
-    }
-}
-
-/// Small ember-text link-style button ("Grant", "Reveal").
-struct EmberLinkButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Theme.emberText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Theme.emberTint, in: RoundedRectangle(cornerRadius: 5))
-            .opacity(configuration.isPressed ? 0.7 : 1)
-    }
-}
-
 // MARK: - Drawn artwork (app icon + menu-bar icon)
 
 enum AppArtwork {

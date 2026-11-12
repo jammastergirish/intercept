@@ -71,19 +71,16 @@ enum SelfTest {
         }
 
         guard let i = args.firstIndex(of: "--selftest"), args.count > i + 3,
-              let mode: RecordingMode = args[i + 1] == "screenonly" ? .screenOnly
-                    : RecordingMode(rawValue: args[i + 1].hasPrefix("screen") ? "screen" : args[i + 1]),
               let seconds = Double(args[i + 2]) else { return }
+        let kind = args[i + 1]
+        let settings = testSettings(kind)
         let out = URL(fileURLWithPath: args[i + 3])
 
         Task {
             let raw = out.deletingLastPathComponent().appendingPathComponent(".selftest.capture.mov")
-            // "screenall" records every distinct display; "screenall-mirrors"
-            // also records mirrored displays, to exercise the compositor.
-            let kind = args[i + 1]
-            let session = CaptureSession(mode: mode, displays: kind.hasPrefix("screenall") ? .all : .main, rawURL: raw)
-            session.includeMirrors = kind == "screenall-mirrors"
-            session.duplicateMainForTest = kind == "screenall-double"
+            let session = CaptureSession(settings: settings, rawURL: raw)
+            session.includeMirrors = kind.contains("mirrors")
+            session.duplicateMainForTest = kind.contains("double")
             var stopError = "none"
             session.onUserStopped = { stopError = "stopped from the macOS menu" }
             do {
@@ -96,7 +93,7 @@ enum SelfTest {
                     peakIn = max(peakIn, l.input); peakOut = max(peakOut, l.output)
                 }
                 _ = try await session.stop()
-                try await Mixdown.run(raw: raw, to: out, fileType: mode.fileType)
+                try await Mixdown.run(raw: raw, to: out, fileType: settings.fileType)
                 try? FileManager.default.removeItem(at: raw)
 
                 let asset = AVURLAsset(url: out)
@@ -116,14 +113,36 @@ enum SelfTest {
         }
     }
 
+    /// What a self-test records. Either a word joined with "+", e.g.
+    /// "screen+audio+camera", "camera+nomic", "screen+all+double", or one of
+    /// the older names: "audio", "screen" (screen + audio), "screenonly",
+    /// "screenall", "screenall-double", "screenall-mirrors".
+    private static func testSettings(_ kind: String) -> CaptureSettings {
+        var s = CaptureSettings()
+        let legacy: [String: String] = [
+            "audio": "audio", "screen": "screen+audio", "screenonly": "screen",
+            "screenall": "screen+audio+all", "screenall-double": "screen+audio+all+double",
+            "screenall-mirrors": "screen+audio+all+mirrors",
+        ]
+        let words = Set((legacy[kind] ?? kind).split(separator: "+").map(String.init))
+        s.screen = words.contains("screen")
+        s.audio = words.contains("audio")
+        s.camera = words.contains("camera")
+        s.displays = words.contains("all") ? .all : .main
+        s.useMic = !words.contains("nomic")
+        s.macSound = !words.contains("nosound")
+        return s
+    }
+
     @MainActor
     private static func runAppTest(seconds: Double, folder: URL) {
         let defaults = UserDefaults.standard
         let savedFolder = defaults.object(forKey: "folder")
-        let savedMode = defaults.object(forKey: "mode")
+        let saved = SettingsStore.load()
         let state = AppState()
         state.folder = folder
-        state.mode = .screen
+        state.settings.screen = true
+        state.settings.audio = true
         let t0 = Date()
         var log: [String] = []
         var last = ""
@@ -147,7 +166,7 @@ enum SelfTest {
             let files = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
             log.append("files: \(files)")
             if let f = savedFolder { defaults.set(f, forKey: "folder") } else { defaults.removeObject(forKey: "folder") }
-            if let m = savedMode { defaults.set(m, forKey: "mode") } else { defaults.removeObject(forKey: "mode") }
+            SettingsStore.save(saved)
             let text = log.joined(separator: "\n")
             print(text)
             try? text.write(to: folder.appendingPathComponent("apptest.txt"), atomically: true, encoding: .utf8)

@@ -4,33 +4,6 @@ import AVFoundation
 import CoreMedia
 import CoreImage
 
-enum RecordingMode: String, CaseIterable, Identifiable {
-    case screenOnly        // the screen, no sound
-    case audio             // mic + system sound
-    case screen            // the screen plus mic + system sound ("screen" kept for saved settings)
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .screenOnly: return "Screen"
-        case .audio: return "Audio"
-        case .screen: return "Screen + Audio"
-        }
-    }
-    var hasVideo: Bool { self != .audio }
-    var hasAudio: Bool { self != .screenOnly }
-    var fileExtension: String { hasVideo ? "mp4" : "m4a" }
-    var fileType: AVFileType { hasVideo ? .mp4 : .m4a }
-}
-
-/// Which displays a screen recording covers.
-enum DisplayChoice: String, CaseIterable, Identifiable {
-    case main   // the display with the menu bar
-    case all    // every distinct display, side by side in one video
-
-    var id: String { rawValue }
-}
-
 enum CaptureError: LocalizedError {
     case noDisplay
     case writerFailed(String)
@@ -67,11 +40,12 @@ enum Displays {
 ///   (it turned off), the video holds its last picture and Intercept keeps
 ///   trying to reconnect; once the display is back, video carries on in the
 ///   same file.
-/// - Several displays: each gets its own stream, and a 30 fps timer pastes the
-///   latest frame from each onto one canvas laid out like System Settings.
+/// - Several displays, or the camera: a 30 fps timer pastes the latest frame
+///   from each display onto one canvas laid out like System Settings, with the
+///   camera in a box in the bottom-right corner (or filling the frame if it's
+///   the only picture).
 final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
-    let mode: RecordingMode
-    let displayChoice: DisplayChoice
+    let settings: CaptureSettings
     let rawURL: URL
     /// Test hook: also record displays that mirror another one.
     var includeMirrors = false
@@ -94,6 +68,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private var micTrack: AudioTrackWriter?
     private var systemSource: SystemAudioTap?
     private var micSource: MicrophoneSource?
+    private var cameraSource: CameraSource?
 
     private let queue = DispatchQueue(label: "intercept.capture", qos: .userInitiated)
     private var sessionStart: CMTime = .invalid
@@ -109,11 +84,13 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private var reconnecting = false
     private var reconnectTimer: DispatchSourceTimer?
 
-    // Multi-display compositing.
+    // Compositing (several displays and/or the camera).
     private var compositing = false
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var placement: [Int: CGRect] = [:]   // canvas pixels, origin bottom-left
     private var latestFrame: [Int: CVPixelBuffer] = [:]
+    private var cameraFrame: CVPixelBuffer?
+    private var cameraRect: CGRect = .zero        // canvas pixels, origin bottom-left
     private var frameDirty = false
     private var drewComposite = false
     private var compositeTimer: DispatchSourceTimer?
@@ -125,9 +102,8 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private var _outLevel: Float = 0
     private var _videoPaused = false
 
-    init(mode: RecordingMode, displays: DisplayChoice = .main, rawURL: URL) {
-        self.mode = mode
-        self.displayChoice = displays
+    init(settings: CaptureSettings, rawURL: URL) {
+        self.settings = settings
         self.rawURL = rawURL
     }
 
@@ -146,11 +122,29 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     // MARK: Start
 
     func start() async throws {
+        // The camera starts first so its picture size is known for the layout.
+        if settings.camera {
+            let camera = CameraSource(deviceID: settings.cameraID)
+            camera.onFrame = { [weak self] pb in
+                self?.queue.async {
+                    self?.cameraFrame = pb
+                    self?.frameDirty = true
+                }
+            }
+            try camera.start()
+            cameraSource = camera
+        }
         var content: SCShareableContent?
-        if mode.hasVideo {
-            let c = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            content = c
-            try planVideo(c)
+        do {
+            if settings.screen {
+                let c = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                content = c
+                try planScreen(c)
+            }
+            if settings.camera { planCamera() }
+        } catch {
+            cameraSource?.stop()
+            throw error
         }
 
         // Writer for the temporary multi-track file.
@@ -161,7 +155,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         // `Recovery` turns such leftovers into normal recordings at next launch.
         writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
 
-        if mode.hasVideo {
+        if settings.hasVideo {
             let w = Int(videoSize.width), h = Int(videoSize.height)
             let bitrate = max(8_000_000, w * h * 4)   // ~4 bits/pixel/s, generous for text
             let vi = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -190,16 +184,14 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             }
         }
 
-        if mode.hasAudio {
-            func track() -> AudioTrackWriter {
-                let input = AVAssetWriterInput(mediaType: .audio, outputSettings: Mixdown.pcmSettings)
-                input.expectsMediaDataInRealTime = true
-                writer.add(input)
-                return AudioTrackWriter(input: input)
-            }
-            systemTrack = track()
-            micTrack = track()
+        func track() -> AudioTrackWriter {
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: Mixdown.pcmSettings)
+            input.expectsMediaDataInRealTime = true
+            writer.add(input)
+            return AudioTrackWriter(input: input)
         }
+        if settings.recordsMacSound { systemTrack = track() }
+        if settings.recordsMic { micTrack = track() }
 
         guard writer.startWriting() else {
             throw CaptureError.writerFailed(writer.error?.localizedDescription ?? "unknown error")
@@ -210,7 +202,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             // Start the sound first: the first time, macOS may hold this up
             // while it asks for permission. The file's clock starts only once
             // that's done (host clock, the same one video frames use).
-            if mode.hasAudio { try startAudio() }
+            if settings.hasAudio { try startAudio() }
             queue.sync {
                 sessionStart = CMClockGetTime(CMClockGetHostTimeClock())
                 writer.startSession(atSourceTime: sessionStart)
@@ -218,6 +210,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             if let content { try await startVideoStreams(content) }
         } catch {
             stopAudio()
+            cameraSource?.stop()
             writer.cancelWriting()
             throw error
         }
@@ -226,12 +219,12 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// Decide which displays to record, the video size, and (for several
     /// displays) where each one sits on the canvas.
-    private func planVideo(_ content: SCShareableContent) throws {
+    private func planScreen(_ content: SCShareableContent) throws {
         guard let mainDisplay = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
                 ?? content.displays.first else { throw CaptureError.noDisplay }
 
         var targets = [mainDisplay]
-        if displayChoice == .all {
+        if settings.displays == .all {
             targets += content.displays.filter { d in
                 d.displayID != mainDisplay.displayID &&
                 (includeMirrors || CGDisplayMirrorsDisplay(d.displayID) == kCGNullDirectDisplay)
@@ -271,20 +264,41 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             let h = Int(filter.contentRect.height * scale) & ~1
             videoSize = CGSize(width: w, height: h)
             streamSizes[0] = (w, h)
+            placement[0] = CGRect(x: 0, y: 0, width: w, height: h)   // used if the camera is on
         }
+    }
+
+    /// Where the camera goes: a box in the bottom-right corner of the screen
+    /// recording, or the whole frame if there's no screen.
+    private func planCamera() {
+        compositing = true
+        let cam = cameraSource?.size ?? CGSize(width: 1920, height: 1080)
+        if !settings.screen {
+            videoSize = CGSize(width: Int(cam.width) & ~1, height: Int(cam.height) & ~1)
+            cameraRect = CGRect(origin: .zero, size: videoSize)
+            return
+        }
+        let w = (videoSize.width * 0.22).rounded()
+        let h = (w * cam.height / max(cam.width, 1)).rounded()
+        let margin = (videoSize.width * 0.02).rounded()
+        cameraRect = CGRect(x: videoSize.width - w - margin, y: margin, width: w, height: h)
     }
 
     // MARK: Sound
 
     private func startAudio() throws {
-        let system = SystemAudioTap()
-        system.onChunk = { [weak self] chunk in self?.queue.async { self?.write(chunk, isMic: false) } }
-        let mic = MicrophoneSource()
-        mic.onChunk = { [weak self] chunk in self?.queue.async { self?.write(chunk, isMic: true) } }
-        try system.start()
-        try mic.start()
-        systemSource = system
-        micSource = mic
+        if settings.recordsMacSound {
+            let system = SystemAudioTap()
+            system.onChunk = { [weak self] chunk in self?.queue.async { self?.write(chunk, isMic: false) } }
+            try system.start()
+            systemSource = system
+        }
+        if settings.recordsMic {
+            let mic = MicrophoneSource(deviceUID: settings.micID)
+            mic.onChunk = { [weak self] chunk in self?.queue.async { self?.write(chunk, isMic: true) } }
+            try mic.start()
+            micSource = mic
+        }
     }
 
     private func stopAudio() {
@@ -385,6 +399,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         for stream in current { try? await stream.stopCapture() }
         stopAudio()
+        cameraSource?.stop()
         return try await finishWriting()
     }
 
@@ -444,9 +459,11 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private func drawComposite() {
         guard !stopping, frameDirty, let writer, writer.status == .writing,
               let adaptor, let vi = videoInput, let pool = adaptor.pixelBufferPool else { return }
-        // Wait until every display has sent a picture, so the video doesn't
-        // open with a black gap where a display should be.
-        guard drewComposite || latestFrame.count == placement.count else { return }
+        // Wait until every display (and the camera) has sent a picture, so the
+        // video doesn't open with a black gap where one should be.
+        let screensReady = !settings.screen || latestFrame.count == placement.count
+        let cameraReady = !settings.camera || cameraFrame != nil
+        guard drewComposite || (screensReady && cameraReady) else { return }
 
         // ScreenCaptureKit stamps frames with the host clock, so "now" on that
         // clock lines the composite frames up with the sound.
@@ -457,8 +474,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let canvas = CGRect(origin: .zero, size: videoSize)
         var image = CIImage(color: .black).cropped(to: canvas)
-        for (i, pb) in latestFrame {
-            guard let r = placement[i] else { continue }
+        func paste(_ pb: CVPixelBuffer, into r: CGRect) {
             var frame = CIImage(cvPixelBuffer: pb)
             let sx = r.width / frame.extent.width, sy = r.height / frame.extent.height
             if abs(sx - 1) > 0.001 || abs(sy - 1) > 0.001 {
@@ -466,6 +482,18 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
             }
             frame = frame.transformed(by: CGAffineTransform(translationX: r.minX, y: r.minY))
             image = frame.composited(over: image)
+        }
+        for (i, pb) in latestFrame {
+            if let r = placement[i] { paste(pb, into: r) }
+        }
+        if let cam = cameraFrame, !cameraRect.isEmpty {
+            if settings.screen {
+                // A dark edge so the camera box stands out from the screen.
+                let edge = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.6))
+                    .cropped(to: cameraRect.insetBy(dx: -4, dy: -4))
+                image = edge.composited(over: image)
+            }
+            paste(cam, into: cameraRect)
         }
         ciContext.render(image, to: out, bounds: canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
 

@@ -1,15 +1,21 @@
 # Intercept
 
-**Record everything going in and out of your Mac.** One button. Intercept records
-your microphone and every sound your Mac plays, and optionally the whole screen,
+**Record everything going in and out of your Mac.** One button. Tick any
+combination of **Screen**, **Audio** and **Camera**, and Intercept records them
 into a single file.
 
-- **Audio** mode → `Intercept <date> at <time>.m4a` (AAC, 48 kHz stereo)
-- **Screen + Audio** mode → `Intercept <date> at <time>.mp4` (HEVC video at native resolution, 30 fps, plus the same audio)
-  - **Displays: Main** records the display with the menu bar.
-  - **Displays: All** records every distinct display in one video, placed side by
-    side the way they're arranged in System Settings › Displays. A display that
-    mirrors another is skipped, because its picture is already in the video.
+- **Screen** records the display at native resolution, 30 fps (HEVC).
+  - **Displays: Main / All** (shown when more than one display is connected):
+    the display with the menu bar, or every distinct display side by side, laid
+    out like System Settings › Displays. Mirrored displays are skipped.
+- **Audio** records a **microphone** (the system default, one you pick, or none)
+  and/or **Mac sound** (everything the Mac plays).
+- **Camera** records the camera you pick (built-in, external, or iPhone via
+  Continuity Camera). With Screen it sits in a box in the bottom-right corner;
+  on its own it fills the frame.
+
+Anything with Screen or Camera saves an `.mp4`; Audio alone saves an `.m4a`
+(AAC, 48 kHz stereo). Files are named `Intercept <date> at <time>`.
 
 The microphone and the system sound are mixed into one audio track, so any player
 hears both sides. Recordings go to `~/Documents/Intercept` by default; pick another
@@ -24,16 +30,15 @@ A regular app (Dock and Cmd-Tab) with a menu-bar icon, styled to match One Tap T
 
 ## Permissions
 
-Intercept uses three macOS permissions:
+Intercept asks only for what you've ticked:
 
-1. **Microphone**: to record what goes in. Needed for Audio and Screen + Audio.
-2. **Screen & System Audio Recording**: to record the screen. Needed for Screen and
-   Screen + Audio. macOS only applies this one after the app restarts, so press
-   **Relaunch** after you allow it.
-3. **System audio**: to record the sound the Mac plays. macOS asks the first time
-   you record with sound.
+1. **Microphone**: when Audio is ticked with a microphone chosen.
+2. **Camera**: when Camera is ticked.
+3. **Screen Recording**: when Screen is ticked. macOS only applies this one after
+   the app restarts, so press **Relaunch** after you allow it.
+4. **System audio**: to record Mac sound. macOS asks the first time.
 
-The main window shows the first two, with **Grant** buttons.
+The main window lists the first three, with **Grant** buttons.
 
 ## Build from source
 
